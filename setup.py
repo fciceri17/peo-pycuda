@@ -17,7 +17,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name='bernardis_ciceri',
+    name='peo_pycuda',
 
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
@@ -31,7 +31,7 @@ setup(
     url='https://github.com/fciceri17/peo-pycuda',
 
     # Author details
-    author='Cesare Bernardi, Filippo Ciceri',
+    author='Cesare Bernardis, Filippo Ciceri',
     # author_email='lunatic.goats@gmail.com',
 
     # Choose your license
@@ -72,7 +72,7 @@ setup(
     # your project is installed. For an analysis of "install_requires" vs pip's
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
-    install_requires=['networkx'
+    install_requires=['networkx', 'pycuda'
                       ],
 
     # List additional groups of dependencies here (e.g. development
