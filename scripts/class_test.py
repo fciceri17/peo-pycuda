@@ -15,7 +15,7 @@ def collect_components(components, vertices):
 
 g = generateChordalGraph(500, 0.4, False)
 
-slice = np.random.random_integers(0,500, 200)
+slice = np.random.random_integers(0, 500, 200)
 
 vertices, edges = g.nodes(), nx.to_scipy_sparse_matrix(g)[:,slice][slice,:]
 n, components = sparse.csgraph.connected_components(edges, directed=False)
