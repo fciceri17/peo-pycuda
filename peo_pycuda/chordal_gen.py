@@ -8,7 +8,7 @@ def generateChordalGraph(N, DENSITY, debug=False):
     graph = [set()]
     n = m = 0
     count1 = count2 = 0
-    while n < N:
+    while n < N-1:
         if random.random() < math.exp(-m * 3 / N):
             n1 = random.randint(0, len(graph)-1)
             graph.append(set([n1]))
