@@ -40,5 +40,3 @@ def generateChordalGraph(N, DENSITY, debug=False):
                 edgelist.append((i, n))
     return nx.Graph(edgelist)
 
-g = generateChordalGraph(500, 0.5, True)
-print(nx.is_chordal(g))
