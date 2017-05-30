@@ -151,8 +151,6 @@ __global__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements
 {
     
     float** g_scanBlockSums;
-    unsigned int g_numEltsAllocated = num_elements;
-    unsigned int g_numLevelsAllocated = 0;
 
     unsigned int blockSize = BLOCK_SIZE; // max size of the thread blocks
     unsigned int numElts = num_elements;
@@ -171,7 +169,6 @@ __global__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements
     } while (numElts > 1);
 
     g_scanBlockSums = (float**) malloc(level * sizeof(float*));
-    g_numLevelsAllocated = level;
     
     numElts = num_elements;
     level = 0;
@@ -188,7 +185,7 @@ __global__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements
         numElts = numBlocks;
     } while (numElts > 1);
 
-    prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums, g_numEltsAllocated, g_numLevelsAllocated);
+    prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums);
     
 }
 
@@ -236,7 +233,7 @@ delta = 8 ** math.ceil(math.log(N, 5/4))
 
 extra_space = int(N / 16 + N / 16**2 + 1)
 
-tmp = np.zeros(N, dtype=np.float64)
+tmp = np.zeros(N, dtype=np.float32)
 prescan(cuda.In(np.arange(N, dtype=np.float32)), cuda.Out(tmp), np.int32(N), block=(1,1,1), shared=8*(N+extra_space+10))
 print(np.array(tmp, dtype=np.int))
 
