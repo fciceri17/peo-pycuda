@@ -101,17 +101,17 @@ __global__ void in_class(double *numbering, long long int *roots, int *indptr, i
 }
 
 
-__global__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
+__device__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
 {
 
 }
 
-__global__ void stratify_high_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
+__device__ void stratify_high_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
 {
 
 }
 
-__global__ void stratify_low_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
+__device__ void stratify_low_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
 {
 
 }
@@ -139,13 +139,13 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
     richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n-1], is_richer_neighbor, high_degree);
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     if(irn_sum[n-1] == 0)
-        stratify_none<<< 1, 1 >>>(numbering, roots, indptr, indices, delta, n);
+        stratify_none(numbering, roots, indptr, indices, delta, n);
     else{
         parallel_prefix(high_degree, hd_sum, n);
         if(hd_sum[n-1] == irn_sum[n-1])
-            stratify_high_degree<<< 1, 1 >>>(numbering, roots, indptr, indices, delta, n);
+            stratify_high_degree(numbering, roots, indptr, indices, delta, n, is_richer_neighbor);
         else
-            stratify_low_degree<<< 1, 1 >>>(numbering, roots, indptr, indices, delta, n);
+            stratify_low_degree(numbering, roots, indptr, indices, delta, n, is_richer_neighbor);
     }
 
 
