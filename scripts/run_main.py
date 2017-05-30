@@ -125,12 +125,12 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
     float *irn_sum, *hd_sum, *icc_sum;
 
     unsigned int pps_arr_size  = n*sizeof(float)
-    cudaMalloc(is_richer_neighbor, pps_arr_size)
-    cudaMalloc(high_degree, pps_arr_size)
-    cudaMalloc(is_class_component, pps_arr_size)
-    cudaMalloc(irn_sum, pps_arr_size)
-    cudaMalloc(hd_sum, pps_arr_size)
-    cudaMalloc(icc_sum, pps_arr_size)
+    cudaMalloc(&is_richer_neighbor, pps_arr_size)
+    cudaMalloc(&high_degree, pps_arr_size)
+    cudaMalloc(&is_class_component, pps_arr_size)
+    cudaMalloc(&irn_sum, pps_arr_size)
+    cudaMalloc(&hd_sum, pps_arr_size)
+    cudaMalloc(&icc_sum, pps_arr_size)
 
 
     in_class<<< 1, n >>>(numbering, roots, indptr, indices, numbering[i], is_class_component);
