@@ -74,6 +74,20 @@ __global__ void split_classes(double *numbering, int *indptr, int *indices, long
     }
 }
 
+__global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int curr_node, int curr_level)
+{
+    const int i = curr_node;
+    if(level[i]>0)
+        return;
+    level[i] = curr_level;
+
+    for(int j = indptr[i]; j < indptr[i+1]; j++){
+        spanning_tree_depth(indptr, indices, level, indices[j], curr_level+1)
+    }
+
+}
+
+
 __global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, int c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
     const int i = threadIdx.x;
