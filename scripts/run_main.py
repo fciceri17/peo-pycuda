@@ -143,18 +143,123 @@ __global__ void in_class(double *numbering, long long int *roots, int *indptr, i
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
+__global__ void is_clique(float *is_class_component, int *indptr, int *indices, int n, float c, float *full_connected)
+{
+    const int i = threadIdx.x;
+    full_connected[i] = 0;
+    if(is_class_component[i] == 0) return;
+    
+    int d = 0;
+    for(int j = indptr[i]; j < indptr[i+1]; j++){
+        if(is_class_component[indices[j]] == 1){
+            d += 1;
+        }
+    }
+    
+    if(d >= c-1){
+        full_connected[i] = 1;
+    }
+}
+
+__global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices, int n)
+{
+    const int i = threadIdx.x;
+    
+    if((i == 0 && D_sum[0] == 0) || D_sum[i] == D_sum[i-1]) return;
+    
+    numbering[i] += D_sum[i];
+}
+
+__global__ void difference(float *a, float *b, float *r)
+{
+    const int i = threadIdx.x;
+    r[i] = a[i] - b[i];
+}
+
+__global__ void find_first(float *a, int *first)
+{
+    const int i = threadIdx.x;
+    if((i == 0 && a[0] == 1) || (a[i] == 1 && a[i-1] == 0)) *first = i;
+}
+
+__global__ void find_common_neighbors(float *is_class_component, int *indptr, int *indices, int f, int s, float *r)
+{
+    const int i = threadIdx.x;
+    r[i] = 0;
+    if(is_class_component[i] == 0) return;
+    
+    int d = 0;
+    for(int j = indptr[i]; j < indptr[i+1]; j++){
+        if(indices[j] == f || indices[j] == s){
+            d += 1;
+        }
+    }
+    
+    if(d == 2) r[i] = 1;
+}
+
 __device__ void stratify_none(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float c)
 {
-    float *D, *C_D;
+    float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors;
+    float *D_sum, *D_clique_sum, *D_diff_sum, *D_diff_first_neigh_sum, *common_neighbors_sum;
+    
+    int *first, *second;
+    cudaMalloc((void**)&first, sizeof(int));
+    cudaMalloc((void**)&second, sizeof(int));
 
     unsigned int pps_arr_size  = n*sizeof(float);
     cudaMalloc((void**)&D, pps_arr_size);
     cudaMalloc((void**)&C_D, pps_arr_size);
+    cudaMalloc((void**)&D_clique, pps_arr_size);
+    cudaMalloc((void**)&D_sum, pps_arr_size);
+    cudaMalloc((void**)&D_clique_sum, pps_arr_size);
+    cudaMalloc((void**)&D_diff, pps_arr_size);
+    cudaMalloc((void**)&D_diff_sum, pps_arr_size);
+    cudaMalloc((void**)&D_diff_first_neigh, pps_arr_size);
+    cudaMalloc((void**)&D_diff_first_neigh_sum, pps_arr_size);
+    cudaMalloc((void**)&D_diff_first_neigh_diff, pps_arr_size);
+    cudaMalloc((void**)&common_neighbors, pps_arr_size);
+    cudaMalloc((void**)&common_neighbors_sum, pps_arr_size);
 
-    stratify_none_getD<<< 1, n >>>(numbering, roots, indptr, indices, n, c, root, D);
+    stratify_none_getD<<< 1, n >>>(is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
-    stratify_none_getC_D<<< 1, n >>>(numbering, roots, indptr, indices, n, D, root, C_D);
+    stratify_none_getC_D<<< 1, n >>>(is_class_component, indptr, indices, n, D, C_D);
     cudaDeviceSynchronize();
+    
+    //number of members of D
+    parallel_prefix(D, D_sum, n);
+    //get number of neighbors in D of nodes in D
+    is_clique<<< 1, n >>>(D, indptr, indices, n, c, D_clique);
+    cudaDeviceSynchronize();
+    //check if they are all connected
+    parallel_prefix(D_clique, D_clique_sum, n);
+    cudaDeviceSynchronize();
+    if(D_clique_sum[n-1] == D_sum[n-1]){
+        add_i<<< 1, n >>>(numbering, D_sum, indptr, indices, n);
+    }else{
+        difference<<< 1, n >>>(D, D_clique, D_diff);
+        cudaDeviceSynchronize();
+        parallel_prefix(D_diff, D_diff_sum, n);
+        cudaDeviceSynchronize();
+        find_first<<< 1, n >>>(D_diff_sum, first);
+        cudaDeviceSynchronize();
+        for(int j = indptr[*first]; j < indptr[*first + 1]; j++){
+            if(D_diff[indices[j]] == 1){
+                D_diff_first_neigh[indices[j]] = 1;
+            }
+        }
+        difference<<< 1, n >>>(D_diff_first_neigh, D_diff, D_diff_first_neigh_diff);
+        cudaDeviceSynchronize();
+        parallel_prefix(D_diff_first_neigh_diff, D_diff_first_neigh_sum, n);
+        cudaDeviceSynchronize();
+        find_first<<< 1, n >>>(D_diff_first_neigh_sum, second);
+        cudaDeviceSynchronize();
+        find_common_neighbors<<< 1, n >>>(D, indptr, indices, *first, *second, common_neighbors);
+        cudaDeviceSynchronize();
+        parallel_prefix(common_neighbors, common_neighbors_sum, n);
+        cudaDeviceSynchronize();
+        add_i<<< 1, n >>>(numbering, common_neighbors_sum, indptr, indices, n);
+    }
 }
 
 //
