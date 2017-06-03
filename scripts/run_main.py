@@ -82,7 +82,9 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int *
     level[neighbors[i]] = curr_level;
 
     int j = indptr[neighbors[i]];
-    spanning_tree_depth<<< 1, j >>>(indptr, indices, level, indices+j*sizeof(int), curr_level+1);
+    int num_neighbors = indptr[i+1] - indptr[i];
+    if(num_neighbors>0)
+        spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, indices+j*sizeof(int), curr_level+1);
 
 }
 
