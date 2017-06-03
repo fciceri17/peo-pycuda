@@ -18,7 +18,7 @@ cuda_code = """
 extern "C" {
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
 {
-    
+
     float** g_scanBlockSums;
 
     unsigned int blockSize = BLOCK_SIZE; // max size of the thread blocks
@@ -27,8 +27,8 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
     int level = 0;
 
     do
-    {       
-        unsigned int numBlocks = 
+    {
+        unsigned int numBlocks =
             max(1, (int)ceil((float)numElts / (2.f * blockSize)));
         if (numBlocks > 1)
         {
@@ -38,54 +38,72 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
     } while (numElts > 1);
 
     g_scanBlockSums = (float**) malloc(level * sizeof(float*));
-    
+
     numElts = num_elements;
     level = 0;
-    
+
     do
-    {       
-        unsigned int numBlocks = 
+    {
+        unsigned int numBlocks =
             max(1, (int)ceil((float)numElts / (2.f * blockSize)));
-        if (numBlocks > 1) 
+        if (numBlocks > 1)
         {
-            cudaMalloc((void**) &g_scanBlockSums[level++],  
+            cudaMalloc((void**) &g_scanBlockSums[level++],
                                       numBlocks * sizeof(float));
         }
         numElts = numBlocks;
     } while (numElts > 1);
 
     prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums);
-    
+
 }
 
 __global__ void split_classes(double *numbering, int *indptr, int *indices, long long int *roots, int *changes)
 {
     const int i = threadIdx.x;
     int min = roots[i];
-    
+
     for(int j = indptr[i]; j < indptr[i+1]; j++){
         if(numbering[i] == numbering[indices[j]] && roots[indices[j]] < min){
             min = roots[indices[j]];
         }
     }
-    
+
     if(min != roots[i]){
         roots[i] = min;
         changes[i] += 1;
     }
 }
 
-__global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int *neighbors, int curr_level)
+__global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int *in_component, int *neighbors, int curr_level)
 {
     const int i = threadIdx.x;
-    if(level[neighbors[i]]>0)
+    int curr_node = neighbors[i];
+    if(level[curr_node]>0 || in_component[curr_node]==0)
         return;
-    level[neighbors[i]] = curr_level;
+    level[curr_node] = curr_level;
 
-    int j = indptr[neighbors[i]];
-    int num_neighbors = indptr[i+1] - indptr[i];
-    if(num_neighbors>0)
-        spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, indices+j*sizeof(int), curr_level+1);
+    int j = indptr[curr_node];
+    int num_neighbors = indptr[curr_node+1] - indptr[curr_node];
+    if(num_neighbors>0){
+        __syncthreads();
+        spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1);
+    }
+}
+
+
+//outputs level of depth forming a spanning tree for a given root in component. the level-node index pair gives a unique
+//depth ordering for each node in the component
+
+__global__ void spanning_tree_numbering(int *indptr, int *indices, int *in_component, int *level, int root, int len)
+{
+
+    level[root]=1;
+    int j = indptr[root];
+    int num_neighbors = indptr[root+1] - indptr[root];
+    spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, indices+j*sizeof(int), in_component, 2);
+    cudaDeviceSynchronize();
+
 
 }
 
@@ -123,7 +141,7 @@ __device__ void stratify_none(double *numbering, long long int *roots, int *indp
     unsigned int pps_arr_size  = n*sizeof(float);
     cudaMalloc((void**)&D, pps_arr_size);
     cudaMalloc((void**)&C_D, pps_arr_size);
-    
+
     stratify_none_getD<<< 1, n >>>(numbering, roots, indptr, indices, n, c, root, D);
     cudaDeviceSynchronize();
     stratify_none_getC_D<<< 1, n >>>(numbering, roots, indptr, indices, n, D, root, C_D);
