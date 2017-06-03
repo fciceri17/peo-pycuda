@@ -58,6 +58,13 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
 
 }
 
+__global__ void zero_array(int* arr)
+{
+    const int i = threadIdx.x;
+    arr[i] = 0;
+
+}
+
 __global__ void split_classes(double *numbering, int *indptr, int *indices, long long int *roots, int *changes)
 {
     const int i = threadIdx.x;
@@ -88,6 +95,7 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int *
     if(num_neighbors>0){
         __syncthreads();
         spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1);
+        cudaDeviceSynchronize();
     }
 }
 
@@ -97,7 +105,8 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, int *level, int *
 
 __global__ void spanning_tree_numbering(int *indptr, int *indices, int *in_component, int *level, int root, int len)
 {
-
+    zero_array<<< 1, len >>>(level);
+    cudaDeviceSynchronize();
     level[root]=1;
     int j = indptr[root];
     int num_neighbors = indptr[root+1] - indptr[root];
@@ -134,7 +143,7 @@ __global__ void in_class(double *numbering, long long int *roots, int *indptr, i
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
-__device__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float c, long long int root)
+__device__ void stratify_none(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float c)
 {
     float *D, *C_D;
 
@@ -148,12 +157,13 @@ __device__ void stratify_none(double *numbering, long long int *roots, int *indp
     cudaDeviceSynchronize();
 }
 
-__device__ void stratify_high_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
+//
+__device__ void stratify_high_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
 {
 
 }
 
-__device__ void stratify_low_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
+__device__ void stratify_low_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
 {
 
 }
@@ -187,14 +197,14 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
     if(irn_sum[n-1] == 0)
-        stratify_none(numbering, roots, indptr, indices, delta, n, icc_sum[n-1], i);
+        stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n-1]);
     else{
         parallel_prefix(high_degree, hd_sum, n);
         cudaDeviceSynchronize();
         if(hd_sum[n-1] == irn_sum[n-1])
-            stratify_high_degree(numbering, roots, indptr, indices, delta, n, is_richer_neighbor);
+            stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor);
         else
-            stratify_low_degree(numbering, roots, indptr, indices, delta, n, is_richer_neighbor);
+            stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor);
     }
 
 
