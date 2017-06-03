@@ -74,22 +74,23 @@ __global__ void split_classes(double *numbering, int *indptr, int *indices, long
     }
 }
 
-__global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, int c, float *is_richer_neighbor, float *high_degree)
+__global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, int c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
     const int i = threadIdx.x;
     is_richer_neighbor[i] = 0;
     high_degree[i] = 0;
+    neighbors_in_c[i] = 0;
     if(roots[i] == c) return;
 
     int neighbors_in_c = 0;
     for(int j = indptr[i]; j < indptr[i+1]; j++){
         if(numbering[i] > numbering[indices[j]] && roots[indices[j]] == root){
             is_richer_neighbor[i] = 1;
-            neighbors_in_c += 1;
+            neighbors_in_c[i] += 1;
         }
     }
 
-    if(neighbors_in_c >= 2 / 5 * c){
+    if(neighbors_in_c[i] >= 2 / 5 * c){
         high_degree[i] = 1;
     }
 }
@@ -97,13 +98,14 @@ __global__ void richer_neighbors(double *numbering, long long int *roots, int *i
 __global__ void in_class(double *numbering, long long int *roots, int *indptr, int *indices, int c, float *is_class_component)
 {
     const int i = threadIdx.x;
+    is_class_component[i] = 0;
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
 
 __device__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
 {
-
+    
 }
 
 __device__ void stratify_high_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
@@ -121,22 +123,24 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
     const int i = threadIdx.x;
     if(roots[i] != i) return;
 
-    float *is_richer_neighbor, *high_degree, *is_class_component;
-    float *irn_sum, *hd_sum, *icc_sum;
+    float *is_richer_neighbor, *high_degree, *is_class_component, *neighbors_in_c;
+    float *irn_sum, *hd_sum, *icc_sum, *nic_sum;
 
     unsigned int pps_arr_size  = n*sizeof(float);
     cudaMalloc((void**)&is_richer_neighbor, pps_arr_size);
     cudaMalloc((void**)&high_degree, pps_arr_size);
     cudaMalloc((void**)&is_class_component, pps_arr_size);
+    cudaMalloc((void**)&neighbors_in_c, pps_arr_size);
     cudaMalloc((void**)&irn_sum, pps_arr_size);
     cudaMalloc((void**)&hd_sum, pps_arr_size);
     cudaMalloc((void**)&icc_sum, pps_arr_size);
+    cudaMalloc((void**)&nic_sum, pps_arr_size);
 
 
     in_class<<< 1, n >>>(numbering, roots, indptr, indices, numbering[i], is_class_component);
     parallel_prefix(is_class_component, icc_sum, n);
 
-    richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n-1], is_richer_neighbor, high_degree);
+    richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n-1], is_richer_neighbor, high_degree, neighbors_in_c);
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     if(irn_sum[n-1] == 0)
         stratify_none(numbering, roots, indptr, indices, delta, n);
