@@ -13,6 +13,7 @@ from pycuda.compiler import DynamicSourceModule
 cuda_code = """
 #include <stdio.h>
 #include <scan.cu>
+#include <stratify_none.cu>
 
 extern "C" {
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
@@ -106,7 +107,7 @@ __global__ void spanning_tree_numbering(int *indptr, int *indices, int *in_compo
 
 }
 
-__global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, int c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
+__global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
     const int i = threadIdx.x;
     is_richer_neighbor[i] = 0;
@@ -133,10 +134,18 @@ __global__ void in_class(double *numbering, long long int *roots, int *indptr, i
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
-
-__device__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n)
+__device__ void stratify_none(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float c, long long int root)
 {
+    float *D, *C_D;
 
+    unsigned int pps_arr_size  = n*sizeof(float);
+    cudaMalloc((void**)&D, pps_arr_size);
+    cudaMalloc((void**)&C_D, pps_arr_size);
+
+    stratify_none_getD<<< 1, n >>>(numbering, roots, indptr, indices, n, c, root, D);
+    cudaDeviceSynchronize();
+    stratify_none_getC_D<<< 1, n >>>(numbering, roots, indptr, indices, n, D, root, C_D);
+    cudaDeviceSynchronize();
 }
 
 __device__ void stratify_high_degree(double *numbering, long long int *roots, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor)
@@ -169,14 +178,19 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
 
 
     in_class<<< 1, n >>>(numbering, roots, indptr, indices, numbering[i], is_class_component);
+    cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
+    cudaDeviceSynchronize();
 
     richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n-1], is_richer_neighbor, high_degree, neighbors_in_c);
+    cudaDeviceSynchronize();
     parallel_prefix(is_richer_neighbor, irn_sum, n);
+    cudaDeviceSynchronize();
     if(irn_sum[n-1] == 0)
-        stratify_none(numbering, roots, indptr, indices, delta, n);
+        stratify_none(numbering, roots, indptr, indices, delta, n, icc_sum[n-1], i);
     else{
         parallel_prefix(high_degree, hd_sum, n);
+        cudaDeviceSynchronize();
         if(hd_sum[n-1] == irn_sum[n-1])
             stratify_high_degree(numbering, roots, indptr, indices, delta, n, is_richer_neighbor);
         else
