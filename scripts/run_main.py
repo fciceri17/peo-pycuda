@@ -304,7 +304,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
 
     }
 
-    //inc_delta(other_array, delta);
+    //inc_delta(numbering, other_array, delta);
     //if(j==irn_num)
     //    GET_C'_COMPONENT()
     //    stratify_none();
