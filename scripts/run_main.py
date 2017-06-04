@@ -230,7 +230,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
 
     stratify_none_getD<<< 1, n >>>(is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
-    stratify_none_getC_D<<< 1, n >>>(is_class_component, indptr, indices, n, D, C_D);
+    difference<<< 1, n >>>(is_class_component, D, C_D);
     cudaDeviceSynchronize();
     
     //number of members of D
@@ -250,7 +250,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
         cudaDeviceSynchronize();
         find_first<<< 1, n >>>(D_diff_sum, first);
         cudaDeviceSynchronize();
-        D_diff_first_neigh[first] = 1;
+        D_diff_first_neigh[*first] = 1;
         for(int j = indptr[*first]; j < indptr[*first + 1]; j++){
             if(D_diff[indices[j]] == 1){
                 D_diff_first_neigh[indices[j]] = 1;
@@ -286,7 +286,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     cudaMalloc((void**)&arr_odd, n*sizeof(float));
     cudaMalloc((void**)&sum, n*sizeof(float));
     init_array<<< 1, n >>>(arr_odd, 1);
-    int i, j, flag, j_index;
+    int i, j, flag;
     flag = 0;
 
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
@@ -382,7 +382,7 @@ DENSITY = 0.5
 
 G = generateChordalGraph(N, DENSITY)
 Gcsr = nx.to_scipy_sparse_matrix(G)
-numbering = np.zeros(N, dtype=np.float32)
+numbering = np.zeros(N, dtype=np.float64)
 
 delta = 8 ** math.ceil(math.log(N, 5/4))
 
