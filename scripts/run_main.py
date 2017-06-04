@@ -272,7 +272,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
 
 
 
-__device__ void stratify_high_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor, float irn_num)
+__device__ void stratify_high_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
 {
     float *adjacencies;
     cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
@@ -285,7 +285,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     cudaMalloc((void**)&arr_even, n*sizeof(float));
     cudaMalloc((void**)&arr_odd, n*sizeof(float));
     cudaMalloc((void**)&sum, n*sizeof(float));
-    init_array<<< 1, n >>>(arr_odd, 1);
+    init_array<<< 1, n >>>(arr_odd, 1); //this array will be the first to be used for the logical and, we will write into arr_even
     int i, j, flag;
     flag = 0;
 
@@ -305,7 +305,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
             if(j > 0){
                 parallel_prefix(curr_array, sum, n);
                 cudaDeviceSynchronize();
-                if(sum[n-1] < n/5)
+                if(sum[n-1] < icc_num/5)
                     flag = 1;
             }
             j++;
@@ -361,7 +361,7 @@ __global__ void stratify(double *numbering, long long int *roots, int *indptr, i
         parallel_prefix(high_degree, hd_sum, n);
         cudaDeviceSynchronize();
         if(hd_sum[n-1] == irn_sum[n-1])
-            stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n-1]);
+            stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n-1], icc_sum[n-1]);
         else
             stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor);
     }
