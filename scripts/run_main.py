@@ -274,7 +274,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
 __device__ void stratify_high_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor, float irn_num)
 {
     float *adjacencies;
-    cudaMalloc((void**)&adjacencies, n*n*sizeof(int));
+    cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
     init_array<<< 1, n*n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, is_richer_neighbor, adjacencies, n);
@@ -284,30 +284,32 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     cudaMalloc((void**)&arr_even, n*sizeof(float));
     cudaMalloc((void**)&arr_odd, n*sizeof(float));
     cudaMalloc((void**)&sum, n*sizeof(float));
-    init_array<<< 1, n*n >>>(arr_even, 1);
-    int j, flag, j_index;
+    init_array<<< 1, n >>>(arr_odd, 1);
+    int i, j, flag, j_index;
     flag = 0;
 
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
     //array for indices
-
-    for(j = 0; j < irn_num && flag == 0; j++){
-        if(j%2 == 0){
-            curr_array = arr_even;
-            other_array = arr_odd;
+    for(i = 0, j=0; i< n && flag == 0; i++){
+        if(is_richer_neighbor[i]){
+            if(j%2 == 0){
+                curr_array = arr_even;
+                other_array = arr_odd;
+            }
+            else{
+                curr_array = arr_odd;
+                other_array = arr_even;
+            }
+            logic_and<<< 1, n >>>(other_array, adjacencies+i*sizeof(float), curr_array);
+            cudaDeviceSynchronize();
+            if(j > 0){
+                parallel_prefix(curr_array, sum, n);
+                cudaDeviceSynchronize();
+                if(sum[n-1] < n/5)
+                    flag = 1;
+            }
+            j++;
         }
-        else{
-            curr_array = arr_odd;
-            other_array = arr_even;
-        }
-        j_index = indptr[j];
-        logic_and<<< 1, n >>>(other_array, adjacencies+j_index*sizeof(float), curr_array);
-        cudaDeviceSynchronize();
-        parallel_prefix(curr_array, sum, n);
-        cudaDeviceSynchronize();
-        if(sum[n-1] < n/5)
-            flag = 1;
-
     }
 
     inc_delta<<< 1, n >>>(numbering, other_array, delta);

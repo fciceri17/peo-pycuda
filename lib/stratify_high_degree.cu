@@ -6,8 +6,8 @@ __global__ void compute_adjacent_nodes(int *indptr, int *indices, float *in_comp
         return;
     int offset = i*n;
     for(int j = indptr[i]; j < indptr[i+1]; j++)
-        if(in_component[j] == 1)
-            adjancencies[offset+j] = 1;
+        if(in_component[indices[j]] == 1)
+            adjancencies[offset+indices[j]] = 1;
 
 }
 
