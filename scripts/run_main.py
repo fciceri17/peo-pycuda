@@ -144,15 +144,15 @@ __global__ void in_class(double *numbering, long long int *roots, int *indptr, i
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
-__global__ void is_clique(float *is_class_component, int *indptr, int *indices, int n, float c, float *full_connected)
+__global__ void is_clique(float *in_component, int *indptr, int *indices, int n, float c, float *full_connected)
 {
     const int i = threadIdx.x;
     full_connected[i] = 0;
-    if(is_class_component[i] == 0) return;
+    if(in_component[i] == 0) return;
     
     int d = 0;
     for(int j = indptr[i]; j < indptr[i+1]; j++){
-        if(is_class_component[indices[j]] == 1){
+        if(in_component[indices[j]] == 1){
             d += 1;
         }
     }
@@ -250,12 +250,13 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
         cudaDeviceSynchronize();
         find_first<<< 1, n >>>(D_diff_sum, first);
         cudaDeviceSynchronize();
+        D_diff_first_neigh[first] = 1;
         for(int j = indptr[*first]; j < indptr[*first + 1]; j++){
             if(D_diff[indices[j]] == 1){
                 D_diff_first_neigh[indices[j]] = 1;
             }
         }
-        difference<<< 1, n >>>(D_diff_first_neigh, D_diff, D_diff_first_neigh_diff);
+        difference<<< 1, n >>>(D_diff, D_diff_first_neigh, D_diff_first_neigh_diff);
         cudaDeviceSynchronize();
         parallel_prefix(D_diff_first_neigh_diff, D_diff_first_neigh_sum, n);
         cudaDeviceSynchronize();
@@ -290,13 +291,12 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
 
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
     //array for indices
-    for(i = 0, j=0; i< n && flag == 0; i++){
+    for(i = 0, j = 0; i < n && flag == 0; i++){
         if(is_richer_neighbor[i]){
             if(j%2 == 0){
                 curr_array = arr_even;
                 other_array = arr_odd;
-            }
-            else{
+            }else{
                 curr_array = arr_odd;
                 other_array = arr_even;
             }
