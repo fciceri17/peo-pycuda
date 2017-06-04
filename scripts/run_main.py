@@ -183,7 +183,7 @@ __global__ void find_first(float *a, int *first)
     if((i == 0 && a[0] == 1) || (a[i] == 1 && a[i-1] == 0)) *first = i;
 }
 
-__global__ void inc_delta(double *numbering, float *other_array, double delta);
+__global__ void inc_delta(double *numbering, float *other_array, double delta)
 {
     const int i = threadIdx.x;
     if(other_array[i] == 1) numbering[i] += delta;
@@ -313,9 +313,12 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     }
 
     inc_delta<<< 1, n >>>(numbering, other_array, delta);
-    //if(j==irn_num)
-    //    GET_C'_COMPONENT()
-    //    stratify_none();
+    /*
+    if(j==irn_num){
+        GET_C'_COMPONENT()
+        stratify_none();
+    }
+    */
 
 }
 
