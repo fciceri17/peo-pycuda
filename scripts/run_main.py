@@ -168,7 +168,7 @@ __global__ void sum_array_to_list(float *sums, float *list)
     
     if((i == 0 && sums[0] == 0) || sums[i] == sums[i-1]) return;
     
-    list[sums[i] - 1] = i;
+    list[(int)sums[i] - 1] = i;
 }
 
 __global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices, int n)
@@ -297,7 +297,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     cudaMalloc((void**)&sum, n*sizeof(float));
     int i, j, flag;
     flag = 0;
-    cudaDeviceSynchronize()
+    cudaDeviceSynchronize();
 
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
     //array for indices
