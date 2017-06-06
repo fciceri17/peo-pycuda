@@ -61,7 +61,7 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
 
 __global__ void init_array(float *arr, float val)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     arr[i] = val;
 
 }
@@ -285,7 +285,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
 {
     float *adjacencies;
     cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
-    init_array<<< 1, n*n >>>(adjacencies, 0);
+    init_array<<< n, n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, is_richer_neighbor, adjacencies, n);
     cudaDeviceSynchronize();
