@@ -282,12 +282,13 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
     cudaDeviceSynchronize();
 
     float *arr_even, *arr_odd, *curr_array, *other_array, *sum;
-    cudaMalloc((void**)&arr_even, n*sizeof(float));
     cudaMalloc((void**)&arr_odd, n*sizeof(float));
-    cudaMalloc((void**)&sum, n*sizeof(float));
     init_array<<< 1, n >>>(arr_odd, 1); //this array will be the first to be used for the logical and, we will write into arr_even
+    cudaMalloc((void**)&arr_even, n*sizeof(float));
+    cudaMalloc((void**)&sum, n*sizeof(float));
     int i, j, flag;
     flag = 0;
+    cudaDeviceSynchronize()
 
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
     //array for indices
