@@ -162,6 +162,15 @@ __global__ void is_clique(float *in_component, int *indptr, int *indices, int n,
     }
 }
 
+__global__ void sum_array_to_list(float *sums, float *list)
+{
+    const int i = threadIdx.x;
+    
+    if((i == 0 && sums[0] == 0) || sums[i] == sums[i-1]) return;
+    
+    list[sums[i] - 1] = i;
+}
+
 __global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices, int n)
 {
     const int i = threadIdx.x;
