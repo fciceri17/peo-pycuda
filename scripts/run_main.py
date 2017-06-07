@@ -320,10 +320,6 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
         tmp_arr_pointer = arr_odd;
 
 
-        parallel_prefix(adjacencies[c_root], sum, n); //MOVE UP
-        cudaDeviceSynchronize();
-        if(sum[n-1] > c * 4/5)
-            flag = 1;
         //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
         //array for indices
         for(i = 0, j = 0, current_depth = 2; flag == 0; i++){
