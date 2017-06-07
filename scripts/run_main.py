@@ -17,6 +17,9 @@ cuda_code = """
 #include <stratify_high_degree.cu>
 
 extern "C" {
+
+__global__ void stratify(double *numbering, float *roots, int *indptr, int *indices, double delta, int n);
+
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
 {
 
@@ -179,6 +182,13 @@ __global__ void in_class(double *numbering, float *roots, int *indptr, int *indi
     const int i = threadIdx.x;
     is_class_component[i] = 0;
     if(roots[i] == c) is_class_component[i] = 1;
+}
+
+__global__ void in_class_special(double *numbering, float *roots, int *indptr, int *indices, int c, float *is_class_component)
+{
+    const int i = threadIdx.x;
+    is_class_component[i] = -1;
+    if(roots[i] == c) is_class_component[i] = c;
 }
 
 __global__ void is_clique(float *in_component, int *indptr, int *indices, int n, float c, float *full_connected)
@@ -541,8 +551,6 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     logic_and<<< 1, n >>>(other_array, is_class_component, other_array);
     inc_delta<<< 1, n >>>(numbering, other_array, delta);
 
-
-
     float *C1_components, *C1_components_sizes, *C1, *component_size, *C_A;
     cudaMalloc((void**)&component_size, n*sizeof(float));
     cudaMalloc((void**)&C1, n*sizeof(float));
@@ -553,6 +561,7 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     difference<<< 1, n >>>(is_class_component, other_array, C_A);
     cudaDeviceSynchronize();
     get_class_components(numbering, indptr, indices, C_A, n, C1_components);
+    cudaDeviceSynchronize();
     compute_component_sizes<<< 1, n >>>(C1_components, C1_components_sizes);
     cudaDeviceSynchronize();
     int max_size_root = 0;
@@ -565,9 +574,10 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     }
 
     if(C1_components_sizes[max_size_root] > c * 4/5){
-        in_class<<< 1, n >>>(numbering, C1_components, indptr, indices, max_size_root, C1);
+        in_class_special<<< 1, n >>>(numbering, C1_components, indptr, indices, max_size_root, C1);
         cudaDeviceSynchronize();
-        stratify(numbering, C1, indptr, indices, delta / 2, n);
+        stratify<<< 1, n >>>(numbering, C1, indptr, indices, delta / 2, n);
+        cudaDeviceSynchronize();
     }
 
 }
@@ -610,7 +620,7 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
         else
             stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, icc_sum[n-1]);
     }
-
+    cudaDeviceSynchronize();
 
 }
 
