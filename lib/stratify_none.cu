@@ -26,3 +26,18 @@ __global__ void stratify_none_getC_D(float *is_class_component, int *indptr, int
 
     if(D[i] == 0) C_D[i] = 1;
 }
+
+__global__ void add_self(float *in_component, float *adjacencies, int n)
+{
+    const int i = threadIdx.x;
+    if(in_component[i])
+        adjacencies[i*n + n] = 1;
+
+}
+
+__global__ void logic_or(float *arr_a, float *arr_b, float *arr_dest)
+{
+    const int i = threadIdx.x;
+    arr_dest[i] = arr_a[i] || arr_b[i];
+
+}

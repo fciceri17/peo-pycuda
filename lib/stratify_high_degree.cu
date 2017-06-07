@@ -1,8 +1,8 @@
 
-__global__ void compute_adjacent_nodes(int *indptr, int *indices, float *in_component, float *is_richer_neighbor, float *adjancencies, int n)
+__global__ void compute_adjacent_nodes(int *indptr, int *indices, float *in_component, float *update_values, float *adjancencies, int n)
 {
     const int i = threadIdx.x;
-    if(is_richer_neighbor[i]==0)
+    if(update_values[i]==0)
         return;
     int offset = i*n;
     for(int j = indptr[i]; j < indptr[i+1]; j++)

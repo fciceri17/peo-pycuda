@@ -126,9 +126,9 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, int
 //outputs level of depth forming a spanning tree for a given root in component. the level-node index pair gives a unique
 //depth ordering for each node in the component
 
-__global__ void spanning_tree_numbering(int *indptr, int *indices, int *in_component, float *level, int root, int len)
+__global__ void spanning_tree_numbering(int *indptr, int *indices, float *in_component, float *level, int root, int n)
 {
-    init_array<<< 1, len >>>(level, 0);
+    init_array<<< 1, n >>>(level, 0);
     cudaDeviceSynchronize();
     level[root]=1;
     int j = indptr[root];
@@ -137,6 +137,15 @@ __global__ void spanning_tree_numbering(int *indptr, int *indices, int *in_compo
     cudaDeviceSynchronize();
     
 }
+
+__global__ void compute_component_sizes(float *roots, float *sizes)
+{
+    const int i = threadIdx.x;
+    int root;
+    root = roots[i];
+    sizes[root]+=1;
+}
+
 
 __global__ void richer_neighbors(double *numbering, long long int *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
@@ -237,9 +246,11 @@ __global__ void find_common_neighbors(float *is_class_component, int *indptr, in
 
 __device__ void stratify_none(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float c)
 {
-    float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors;
-    float *D_sum, *D_clique_sum, *D_diff_sum, *D_diff_first_neigh_sum, *common_neighbors_sum;
-    
+    float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors, *mask, *C_D_components, *T;
+    float *D_sum, *D_clique_sum, *D_diff_sum, *D_diff_first_neigh_sum, *common_neighbors_sum, *C_D_components_sizes;
+    float rolling_sum;
+    int i, flag, c_root;
+
     int *first, *second;
     cudaMalloc((void**)&first, sizeof(int));
     cudaMalloc((void**)&second, sizeof(int));
@@ -258,11 +269,87 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
     cudaMalloc((void**)&common_neighbors, pps_arr_size);
     cudaMalloc((void**)&common_neighbors_sum, pps_arr_size);
 
+
+    cudaMalloc((void**)&C_D_components_sizes, pps_arr_size);
+    init_array<<< 1, n >>>(C_D_components_sizes, 0);
+
+
     stratify_none_getD<<< 1, n >>>(is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
     difference<<< 1, n >>>(is_class_component, D, C_D);
     cudaDeviceSynchronize();
-    
+
+
+    //get_class_components(numbering, indptr, indices, C_D, int n, C_D_components);
+    compute_component_sizes(C_D_components, C_D_components_sizes);
+    cudaDeviceSynchronize();
+    for(i = 0, rolling_sum = 0, flag = 0; i < n && flag == 0; i++)
+        if(C_D_components_sizes[i] >0){
+            if(C_D_components_sizes[i] > c* 4/5){
+                flag = 100;
+                c_root = i;
+            }else{
+                rolling_sum+=C_D_components_sizes[i];
+                if(rolling_sum > c *1/5)
+                    flag = 1;
+                // raise flag, no component can be > 4/5
+            }
+        }
+
+    if(flag>1){ //component exists
+        //generate in_component
+        float *level;
+        float *adjacencies;
+        cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
+        cudaMalloc((void**)&level, pps_arr_size);
+        init_array<<< n, n >>>(adjacencies, 0);
+        cudaDeviceSynchronize();
+        compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, float *in_component, adjacencies, n);
+        add_self<<< 1, n >>>(is_class_component, float *in_component, adjacencies, n);
+        spanning_tree_numbering(indptr, indices, float *in_component, level, c_root, n);
+
+        float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum, *ind_list;
+        cudaMalloc((void**)&arr_odd, n*sizeof(float));
+        cudaMalloc((void**)&arr_even, n*sizeof(float));
+        cudaMalloc((void**)&sum, n*sizeof(float));
+        int i, j, flag, current_depth;
+        flag = 0;
+        cudaDeviceSynchronize();
+        other_array = adjacencies + c_root*sizeof(float);
+        curr_array = arr_even;
+        tmp_arr_pointer = arr_odd;
+
+
+        parallel_prefix(adjacencies[c_root], sum, n); //MOVE UP
+        cudaDeviceSynchronize();
+        if(sum[n-1] > c * 4/5)
+            flag = 1;
+        //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
+        //array for indices
+        for(i = 0, j = 0, current_depth = 2; flag == 0; i++){
+            if(level[i]==current_depth){
+                if(j > 0){
+                    other_array = curr_array;
+                    curr_array = tmp_arr_pointer;
+                    tmp_arr_pointer = other_array; // for next cycle - needed due to first declaration used to skip copying
+                }
+                logic_or<<< 1, n >>>(other_array, adjacencies+i*sizeof(float), curr_array);
+                cudaDeviceSynchronize();
+                parallel_prefix(curr_array, sum, n);
+                cudaDeviceSynchronize();
+                if(sum[n-1] > c * 4/5)
+                    flag = 1;
+                j++;
+            }
+            if(flag == 0 && i == n-1){
+                i = 0; // 0 is either c_root or not in component, increment irrelevant
+                current_depth +=1;
+            }
+        }
+
+        inc_delta<<< 1, n >>>(numbering, other_array, delta);
+        return;
+    }
     //number of members of D
     parallel_prefix(D, D_sum, n);
     //get number of neighbors in D of nodes in D
@@ -425,11 +512,11 @@ delta = 8 ** math.ceil(math.log(N, 5/4))
 
 extra_space = int(N / 16 + N / 16**2 + 1)
 
-unique_numberings = np.unique(numbering, return_inverse=True)
+unique_numberings = np.unique(numbering)
 while len(unique_numberings) < len(numbering) and delta >= 1:
     roots = np.arange(N, dtype=np.int64)
     split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
     stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
     delta /= 8
-    unique_numberings = np.unique(numbering, return_inverse=True)
+    unique_numberings = np.unique(numbering)
 print(numbering)
