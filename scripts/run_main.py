@@ -112,7 +112,7 @@ __global__ void get_class_components_global(double *numbering, int *indptr, int 
     
 }
 
-__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, int *in_component, int *neighbors, int curr_level)
+__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level)
 {
     const int i = threadIdx.x;
     int curr_node = neighbors[i];
@@ -140,7 +140,7 @@ __host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, floa
     level[root]=1;
     int j = indptr[root];
     int num_neighbors = indptr[root + 1] - indptr[root];
-    spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, indices+j*sizeof(int), in_component, 2);
+    spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2);
     cudaDeviceSynchronize();
     
 }
