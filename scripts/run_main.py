@@ -371,43 +371,56 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
         }
 
         inc_delta<<< 1, n >>>(numbering, other_array, delta);
-        return;
-    }
-    //number of members of D
-    parallel_prefix(D, D_sum, n);
-    //get number of neighbors in D of nodes in D
-    is_clique<<< 1, n >>>(D, indptr, indices, n, c, D_clique);
-    cudaDeviceSynchronize();
-    //check if they are all connected
-    parallel_prefix(D_clique, D_clique_sum, n);
-    cudaDeviceSynchronize();
-    if(D_clique_sum[n] == D_sum[n]){
-        add_i<<< 1, n >>>(numbering, D_sum, indptr, indices, n);
     }else{
-        difference<<< 1, n >>>(D, D_clique, D_diff);
+        //number of members of D
+        parallel_prefix(D, D_sum, n);
+        //get number of neighbors in D of nodes in D
+        is_clique<<< 1, n >>>(D, indptr, indices, n, c, D_clique);
         cudaDeviceSynchronize();
-        parallel_prefix(D_diff, D_diff_sum, n);
+        //check if they are all connected
+        parallel_prefix(D_clique, D_clique_sum, n);
         cudaDeviceSynchronize();
-        find_first<<< 1, n >>>(D_diff_sum, first);
-        cudaDeviceSynchronize();
-        D_diff_first_neigh[*first] = 1;
-        for(int j = indptr[*first]; j < indptr[*first + 1]; j++){
-            if(D_diff[indices[j]] == 1){
-                D_diff_first_neigh[indices[j]] = 1;
+        if(D_clique_sum[n] == D_sum[n]){
+            add_i<<< 1, n >>>(numbering, D_sum, indptr, indices, n);
+        }else{
+            difference<<< 1, n >>>(D, D_clique, D_diff);
+            cudaDeviceSynchronize();
+            parallel_prefix(D_diff, D_diff_sum, n);
+            cudaDeviceSynchronize();
+            find_first<<< 1, n >>>(D_diff_sum, first);
+            cudaDeviceSynchronize();
+            D_diff_first_neigh[*first] = 1;
+            for(int j = indptr[*first]; j < indptr[*first + 1]; j++){
+                if(D_diff[indices[j]] == 1){
+                    D_diff_first_neigh[indices[j]] = 1;
+                }
             }
+            difference<<< 1, n >>>(D_diff, D_diff_first_neigh, D_diff_first_neigh_diff);
+            cudaDeviceSynchronize();
+            parallel_prefix(D_diff_first_neigh_diff, D_diff_first_neigh_sum, n);
+            cudaDeviceSynchronize();
+            find_first<<< 1, n >>>(D_diff_first_neigh_sum, second);
+            cudaDeviceSynchronize();
+            find_common_neighbors<<< 1, n >>>(D, indptr, indices, *first, *second, common_neighbors);
+            cudaDeviceSynchronize();
+            parallel_prefix(common_neighbors, common_neighbors_sum, n);
+            cudaDeviceSynchronize();
+            add_i<<< 1, n >>>(numbering, common_neighbors_sum, indptr, indices, n);
         }
-        difference<<< 1, n >>>(D_diff, D_diff_first_neigh, D_diff_first_neigh_diff);
-        cudaDeviceSynchronize();
-        parallel_prefix(D_diff_first_neigh_diff, D_diff_first_neigh_sum, n);
-        cudaDeviceSynchronize();
-        find_first<<< 1, n >>>(D_diff_first_neigh_sum, second);
-        cudaDeviceSynchronize();
-        find_common_neighbors<<< 1, n >>>(D, indptr, indices, *first, *second, common_neighbors);
-        cudaDeviceSynchronize();
-        parallel_prefix(common_neighbors, common_neighbors_sum, n);
-        cudaDeviceSynchronize();
-        add_i<<< 1, n >>>(numbering, common_neighbors_sum, indptr, indices, n);
     }
+    cudaFree(D);
+    cudaFree(C_D);
+    cudaFree(C_D_components);
+    cudaFree(D_clique);
+    cudaFree(D_sum);
+    cudaFree(D_clique_sum);
+    cudaFree(D_diff);
+    cudaFree(D_diff_sum);
+    cudaFree(D_diff_first_neigh);
+    cudaFree(D_diff_first_neigh_sum);
+    cudaFree(D_diff_first_neigh_diff);
+    cudaFree(common_neighbors);
+    cudaFree(common_neighbors_sum);
 }
 
 
@@ -476,8 +489,16 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
         in_class<<< 1, n >>>(numbering, C1_components, indptr, indices, max_size_root, C1);
         cudaDeviceSynchronize();
         stratify_none(numbering, C1, indptr, indices, delta / 2, n, C1_components_sizes[max_size_root]);
+        cudaFree(component_size);
+        cudaFree(C1);
+        cudaFree(C1_components);
+        cudaFree(C1_components_sizes);
     }
 
+    cudaFree(arr_even);
+    cudaFree(sum);
+    cudaFree(arr_odd);
+    cudaFree(adjacencies);
 
 }
 
@@ -517,8 +538,6 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     find_first<<< 1, n >>>(CuB_D_components_sum, b_root);
     cudaDeviceSynchronize();
 
-    printf("CuB-D components\\n");
-    print_array(CuB_D_components, n);
     in_class<<< 1, n >>>(numbering, CuB_D_components, indptr, indices, *b_root, in_component);
     init_array<<< n, n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
@@ -594,6 +613,23 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
         cudaDeviceSynchronize();
     }
 
+    cudaFree(adjacencies);
+    cudaFree(level);
+    cudaFree(in_component);
+    cudaFree(component_size);
+    cudaFree(C1);
+    cudaFree(C1_components);
+    cudaFree(C_A);
+    cudaFree(C1_components_sizes);
+    cudaFree(arr_odd);
+    cudaFree(arr_even);
+    cudaFree(sum);
+    cudaFree(b_root);
+    cudaFree(D);
+    cudaFree(CuB);
+    cudaFree(CuB_D);
+    cudaFree(CuB_D_components);
+    cudaFree(CuB_D_components_sum);
 }
 
 __global__ void stratify(double *numbering, float *roots, int *indptr, int *indices, double delta, int n)
@@ -642,6 +678,14 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     }
     cudaDeviceSynchronize();
 
+    cudaFree(is_richer_neighbor);
+    cudaFree(high_degree);
+    cudaFree(is_class_component);
+    cudaFree(neighbors_in_c);
+    cudaFree(irn_sum);
+    cudaFree(hd_sum);
+    cudaFree(icc_sum);
+    cudaFree(nic_sum);
 }
 
 }
