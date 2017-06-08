@@ -162,7 +162,7 @@ __global__ void compute_component_sizes(float *roots, float *sizes)
     const int i = threadIdx.x;
     int root;
     root = roots[i];
-    sizes[root]+=1;
+    sizes[root] += 1;
 }
 
 
@@ -222,18 +222,18 @@ __global__ void sum_array_to_list(float *sums, float *list)
 {
     const int i = threadIdx.x;
     
-    if((i == 0 && sums[0] == 0) || sums[i] == sums[i-1]) return;
+    if(sums[i+1] == sums[i]) return;
     
-    list[(int)sums[i] - 1] = i;
+    list[(int)sums[i+1] - 1] = i;
 }
 
 __global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices, int n)
 {
     const int i = threadIdx.x;
     
-    if((i == 0 && D_sum[0] == 0) || D_sum[i] == D_sum[i-1]) return;
+    if(D_sum[i+1] == D_sum[i]) return;
     
-    numbering[i] += D_sum[i];
+    numbering[i] += D_sum[i+1];
 }
 
 __global__ void difference(float *a, float *b, float *r)
@@ -246,7 +246,7 @@ __global__ void difference(float *a, float *b, float *r)
 __global__ void find_first(float *a, int *first)
 {
     const int i = threadIdx.x;
-    if((i == 0 && a[0] == 1) || (a[i] == 1 && a[i-1] == 0)) *first = i;
+    if(a[i+1] == 1 && a[i] == 0) *first = i;
 }
 
 __global__ void inc_delta(double *numbering, float *other_array, double delta)
@@ -541,7 +541,7 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     int current_depth;
     flag = 0;
     cudaDeviceSynchronize();
-    other_array = adjacencies + *b_root*sizeof(float);
+    other_array = adjacencies + (*b_root) * sizeof(float);
     curr_array = arr_even;
     tmp_arr_pointer = arr_odd;
     other_array[*b_root] = 1;
