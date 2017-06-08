@@ -15,14 +15,23 @@ cuda_code = """
 #include <scan.cu>
 #include <stratify_none.cu>
 #include <stratify_high_degree.cu>
+#include <stratify_low_degree.cu>
 
 extern "C" {
 
 __global__ void stratify(double *numbering, float *roots, int *indptr, int *indices, double delta, int n);
 
+__host__ __device__ void print_array(float *a, int n)
+{
+    for(int i=0; i<n; i++)
+        printf("%f ", a[i]);
+    printf("\\n");
+}
+
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
 {
 
+    num_elements += 1;
     float** g_scanBlockSums;
 
     unsigned int blockSize = BLOCK_SIZE; // max size of the thread blocks
@@ -104,7 +113,7 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
         cudaDeviceSynchronize();
         parallel_prefix(changes, sum, n);
         cudaDeviceSynchronize();
-    }while(sum[n-1] > 0);
+    }while(sum[n] > 0);
     
 }
 
@@ -119,13 +128,13 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, flo
 {
     const int i = threadIdx.x;
     int curr_node = neighbors[i];
-    if(level[curr_node]>0 || in_component[curr_node]==0)
+    if(level[curr_node] > 0 || in_component[curr_node] == 0)
         return;
     level[curr_node] = curr_level;
 
     int j = indptr[curr_node];
     int num_neighbors = indptr[curr_node+1] - indptr[curr_node];
-    if(num_neighbors>0){
+    if(num_neighbors > 0){
         __syncthreads();
         spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1);
         cudaDeviceSynchronize();
@@ -140,7 +149,7 @@ __host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, floa
 {
     init_array<<< 1, n >>>(level, 0);
     cudaDeviceSynchronize();
-    level[root]=1;
+    level[root] = 1;
     int j = indptr[root];
     int num_neighbors = indptr[root + 1] - indptr[root];
     spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2);
@@ -230,7 +239,7 @@ __global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices
 __global__ void difference(float *a, float *b, float *r)
 {
     const int i = threadIdx.x;
-    r[i] = a[i] - b[i];
+    r[i] = a[i] * (1 - b[i]);
 }
 
 
@@ -273,7 +282,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
     cudaMalloc((void**)&first, sizeof(int));
     cudaMalloc((void**)&second, sizeof(int));
 
-    unsigned int pps_arr_size  = n*sizeof(float);
+    unsigned int pps_arr_size  = (n+1)*sizeof(float);
     cudaMalloc((void**)&D, pps_arr_size);
     cudaMalloc((void**)&C_D, pps_arr_size);
     cudaMalloc((void**)&C_D_components, pps_arr_size);
@@ -351,7 +360,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
                 cudaDeviceSynchronize();
                 parallel_prefix(curr_array, sum, n);
                 cudaDeviceSynchronize();
-                if(sum[n-1] > c * 4/5)
+                if(sum[n] > c * 4/5)
                     flag = 1;
                 j++;
             }
@@ -372,7 +381,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
     //check if they are all connected
     parallel_prefix(D_clique, D_clique_sum, n);
     cudaDeviceSynchronize();
-    if(D_clique_sum[n-1] == D_sum[n-1]){
+    if(D_clique_sum[n] == D_sum[n]){
         add_i<<< 1, n >>>(numbering, D_sum, indptr, indices, n);
     }else{
         difference<<< 1, n >>>(D, D_clique, D_diff);
@@ -437,7 +446,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
             if(j > 0){
                 parallel_prefix(curr_array, sum, n);
                 cudaDeviceSynchronize();
-                if(sum[n-1] < icc_num/5)
+                if(sum[n] < icc_num/5)
                     flag = 1;
             }
             j++;
@@ -478,7 +487,7 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     int *b_root;
     int i, j, flag;
 
-    unsigned int pps_arr_size  = n*sizeof(float);
+    unsigned int pps_arr_size  = (n+1)*sizeof(float);
     cudaMalloc((void**)&b_root, sizeof(int));
     cudaMalloc((void**)&D, pps_arr_size);
     cudaMalloc((void**)&CuB, pps_arr_size);
@@ -492,12 +501,21 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     cudaMalloc((void**)&in_component, pps_arr_size);
 
     logic_or<<< 1, n >>>(is_richer_neighbor, is_class_component, CuB);
-    stratify_none_getD<<< 1, n >>>(CuB, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
+    
+    stratify_lowdegree_getD<<< 1, n >>>(CuB, is_class_component, indptr, indices, n, c, D);
+    cudaDeviceSynchronize();
+    printf("D\\n");
+    print_array(D, n);
+    
+    printf("CuB\\n");
+    print_array(CuB, n);
     difference<<< 1, n >>>(CuB, D, CuB_D);
     cudaDeviceSynchronize();
 
 
+    printf("CuB-D\\n");
+    print_array(CuB_D, n);
     get_class_components(numbering, indptr, indices, CuB_D, n, CuB_D_components);
     cudaDeviceSynchronize();
 
@@ -506,11 +524,14 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     find_first<<< 1, n >>>(CuB_D_components_sum, b_root);
     cudaDeviceSynchronize();
 
+    printf("CuB-D components\\n");
+    print_array(CuB_D_components, n);
     in_class<<< 1, n >>>(numbering, CuB_D_components, indptr, indices, *b_root, in_component);
     init_array<<< n, n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
     //add_self<<< 1, n >>>(is_class_component, in_component, adjacencies, n);
+    
     spanning_tree_numbering(indptr, indices, in_component, level, *b_root, n);
 
     float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum;
@@ -538,7 +559,7 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
             cudaDeviceSynchronize();
             parallel_prefix(curr_array, sum, n);
             cudaDeviceSynchronize();
-            if(sum[n-1] > c * 4/5)
+            if(sum[n] > c * 4/5)
                 flag = 1;
             j++;
         }
@@ -590,7 +611,7 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     float *is_richer_neighbor, *high_degree, *is_class_component, *neighbors_in_c;
     float *irn_sum, *hd_sum, *icc_sum, *nic_sum;
 
-    unsigned int pps_arr_size  = n*sizeof(float);
+    unsigned int pps_arr_size  = (n+1)*sizeof(float);
     cudaMalloc((void**)&is_richer_neighbor, pps_arr_size);
     cudaMalloc((void**)&high_degree, pps_arr_size);
     cudaMalloc((void**)&is_class_component, pps_arr_size);
@@ -601,24 +622,25 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaMalloc((void**)&nic_sum, pps_arr_size);
 
 
-    in_class<<< 1, n >>>(numbering, roots, indptr, indices, numbering[i], is_class_component);
+    in_class<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], is_class_component);
     cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
     cudaDeviceSynchronize();
-
-    richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n-1], is_richer_neighbor, high_degree, neighbors_in_c);
+    if(icc_sum[n] <= 1) return;
+    
+    richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n], is_richer_neighbor, high_degree, neighbors_in_c);
     cudaDeviceSynchronize();
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
-    if(irn_sum[n-1] == 0)
-        stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n-1]);
+    if(irn_sum[n] == 0)
+        stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
     else{
         parallel_prefix(high_degree, hd_sum, n);
         cudaDeviceSynchronize();
-        if(hd_sum[n-1] == irn_sum[n-1])
-            stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n-1], icc_sum[n-1]);
+        if(hd_sum[n] == irn_sum[n])
+            stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n], icc_sum[n]);
         else
-            stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, icc_sum[n-1]);
+            stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, icc_sum[n]);
     }
     cudaDeviceSynchronize();
 
@@ -632,7 +654,7 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 64
+N = 4
 DENSITY = 0.5
 
 G = generateChordalGraph(N, DENSITY)
@@ -648,6 +670,7 @@ while len(unique_numberings) < len(numbering) and delta >= 1:
     roots = np.arange(N, dtype=np.float32)
     split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
     stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
+    print(numbering)
     delta /= 8
     unique_numberings = np.unique(numbering)
 print(numbering)
