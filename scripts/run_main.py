@@ -172,7 +172,7 @@ __global__ void richer_neighbors(double *numbering, float *roots, int *indptr, i
     is_richer_neighbor[i] = 0;
     high_degree[i] = 0;
     neighbors_in_c[i] = 0;
-    if(roots[i] == c) return;
+    if(roots[i] == root) return;
 
     for(int j = indptr[i]; j < indptr[i+1]; j++){
         if(numbering[i] > numbering[indices[j]] && roots[indices[j]] == root){
@@ -632,12 +632,17 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaDeviceSynchronize();
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
+    /*
+    print_array(is_richer_neighbor, n);
+    print_array(high_degree, n);
+    print_array(neighbors_in_c, n);
+    */
     if(irn_sum[n] == 0)
         stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
     else{
         parallel_prefix(high_degree, hd_sum, n);
         cudaDeviceSynchronize();
-        if(hd_sum[n] == irn_sum[n])
+        if(hd_sum[n] >= irn_sum[n])
             stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n], icc_sum[n]);
         else
             stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, icc_sum[n]);
@@ -664,7 +669,7 @@ numbering = np.zeros(N, dtype=np.float64)
 delta = 8 ** math.ceil(math.log(N, 5/4))
 
 extra_space = int(N / 16 + N / 16**2 + 1)
-
+print(Gcsr)
 unique_numberings = np.unique(numbering)
 while len(unique_numberings) < len(numbering) and delta >= 1:
     roots = np.arange(N, dtype=np.float32)
