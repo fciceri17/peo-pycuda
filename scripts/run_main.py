@@ -505,17 +505,10 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     
     stratify_lowdegree_getD<<< 1, n >>>(CuB, is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
-    printf("D\\n");
-    print_array(D, n);
     
-    printf("CuB\\n");
-    print_array(CuB, n);
     difference<<< 1, n >>>(CuB, D, CuB_D);
     cudaDeviceSynchronize();
 
-
-    printf("CuB-D\\n");
-    print_array(CuB_D, n);
     get_class_components(numbering, indptr, indices, CuB_D, n, CuB_D_components);
     cudaDeviceSynchronize();
 
@@ -626,7 +619,7 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
     cudaDeviceSynchronize();
-    if(icc_sum[n] <= 1) return;
+    //if(icc_sum[n] <= 1) return;
     
     richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n], is_richer_neighbor, high_degree, neighbors_in_c);
     cudaDeviceSynchronize();
@@ -659,10 +652,10 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 4
+N = 50
 DENSITY = 0.5
 
-G = nx.Graph([(0, 1),(1, 0),(1, 2),(2, 1),(2, 3),(3, 2)])
+G = generateChordalGraph(N, DENSITY, debug=False)
 
 Gcsr = nx.to_scipy_sparse_matrix(G)
 numbering = np.zeros(N, dtype=np.float64)
@@ -679,3 +672,8 @@ while len(unique_numberings) < len(numbering) and delta >= 1:
     delta /= 8
     unique_numberings = np.unique(numbering)
 print(numbering)
+
+if(len(unique_numberings) == len(numbering)):
+    print("CHORDAL")
+else:
+    print("NOT CHORDAL")

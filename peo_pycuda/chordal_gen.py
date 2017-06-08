@@ -2,6 +2,27 @@ import random
 import math
 import networkx as nx
 
+def generateGraph(N, DENSITY, debug=False):
+    M = int((N * (N-1) / 2) * DENSITY)
+    graph = []
+    n = m = 0
+    while n < N:
+        graph.append(set())
+        n += 1
+    while m < M:
+        n1 = random.randint(0, N-1)
+        n2 = random.randint(0, N-1)
+        if n1 != n2 and n1 not in graph[n2]:
+            graph[n1].add(n2)
+            graph[n2].add(n1)
+            m += 1
+    edgelist = []
+    for i in range(len(graph)):
+        for n in graph[i]:
+            if n > i:
+                edgelist.append((i, n))
+    return nx.Graph(edgelist)
+
 
 def generateChordalGraph(N, DENSITY, debug=False):
     M = int((N * (N-1) / 2) * DENSITY)
