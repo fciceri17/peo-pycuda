@@ -662,7 +662,8 @@ split_classes = cuda_module.get_function("get_class_components_global")
 N = 4
 DENSITY = 0.5
 
-G = generateChordalGraph(N, DENSITY)
+G = nx.Graph([(0, 1),(1, 0),(1, 2),(2, 1),(2, 3),(3, 2)])
+
 Gcsr = nx.to_scipy_sparse_matrix(G)
 numbering = np.zeros(N, dtype=np.float64)
 
@@ -675,7 +676,6 @@ while len(unique_numberings) < len(numbering) and delta >= 1:
     roots = np.arange(N, dtype=np.float32)
     split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
     stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
-    print(numbering)
     delta /= 8
     unique_numberings = np.unique(numbering)
 print(numbering)
