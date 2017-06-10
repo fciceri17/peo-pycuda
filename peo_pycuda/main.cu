@@ -110,12 +110,12 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
 {
     float *changes, *sum;
     
-    /*
+
     cudaMalloc((void**)&changes, sizeof(float) * (n+1));
     cudaMalloc((void**)&sum, sizeof(float) * (n+1));
-    */
-    changes = (float *)malloc(sizeof(float) * (n+1));
-    sum = (float *)malloc(sizeof(float) * (n+1));
+
+    //changes = (float *)malloc(sizeof(float) * (n+1));
+    //sum = (float *)malloc(sizeof(float) * (n+1));
     
     do{
         init_array<<< 1, n >>>(changes, 0);
@@ -125,7 +125,8 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
         parallel_prefix(changes, sum, n);
         cudaDeviceSynchronize();
     }while(sum[n] > 0);
-    
+    cudaFree(changes);
+    cudaFree(sum);
 }
 
 __global__ void get_class_components_global(double *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
@@ -759,13 +760,13 @@ int main()
     init_array<<< 1, N >>>(mask, 1);
     init_array_consecutive<<< 1, N >>>(roots);
 
-    double delta = pow(8, ceil(log(N) / log(5/4)));
+    double delta = pow(8, ceil(log(N) / log(1.25)));
     int flag = 1;
     set<double> numbering_copy;
     cudaDeviceSynchronize();
     while(flag && delta >= 1){
         printf("1\n");
-        get_class_components(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
+        get_class_components_global<<< 1,1 >>>(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
         cudaDeviceSynchronize();
         printf("2\n");
         stratify<<< 1, N >>>(numbering_gpu, roots, indptr_gpu, indices_gpu, delta, N);
