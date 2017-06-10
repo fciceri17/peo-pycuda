@@ -67,13 +67,11 @@ def exportGraphCsr(G, filename="graph.txt", path="../graphs"):
     destination = path + "/" + filename
     Gcsr = nx.to_scipy_sparse_matrix(G)
     out_file = open(destination, "w")
-    out_file.write(str(len(Gcsr.indptr)) + "\n")
+    out_file.write(str(len(Gcsr.indptr)) + " "+str(len(Gcsr.indices)) + " " + str(len(Gcsr.data)) + "\n")
     for i in Gcsr.indptr:
         out_file.write(str(i) + "\n")
-    out_file.write(str(len(Gcsr.indices)) + "\n")
     for i in Gcsr.indices:
         out_file.write(str(i) + "\n")
-    out_file.write(str(len(Gcsr.data)) + "\n")
     for i in Gcsr.data:
         out_file.write(str(i) + "\n")
     out_file.close()

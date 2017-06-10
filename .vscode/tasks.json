@@ -4,6 +4,6 @@
     "version": "0.1.0",
     "command": "nvcc",
     "isShellCommand": true,
-    "args": ["${workspaceRoot}/peo_pycuda/main.cu", "--ptx", "-rdc=true", "-lcudadevrt", "-arch=sm_52", "-m64", "-IC:\\Users\\cesar\\PycharmProjects\\peo-pycuda\\scripts\\..\\lib", "-Ic:\\users\\cesar\\anaconda3\\lib\\site-packages\\pycuda\\cuda kernel.cu"],
+    "args": ["${workspaceRoot}/peo_pycuda/main.cu", "-rdc=true", "-lcudadevrt", "-arch=sm_52", "-m64", "-IC:lib", "-o=scripts/main.exe"],
     "showOutput": "always"
 }

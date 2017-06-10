@@ -695,56 +695,98 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaFree(nic_sum);
 }
 
-void load_graph(char *filename, int *indptr, int *indices, int *n)
+void load_graph(char *filename, int *indptr, int *indices, int *n, int *j)
 {
     FILE *fp = fopen(filename, "r");
     int k;
-    fscanf(fp, "%d", &k);
-    cudaMalloc((void**)&indptr, (k+1) * sizeof(int));
-    for(int i=0; i<k; i++){
-        fscanf(fp, "%d", &indptr[i]);
+    if(fp){
+        fscanf(fp, "%d ", &k);
+        indptr = (int *)malloc(k * sizeof(int));
+        for(int i=0; i<k; i++){
+            fscanf(fp, "%d ", &indptr[i]);
+        }
+        *n = k-1;
+        fscanf(fp, "%d ", &k);
+        indices = (int *)malloc(k * sizeof(int));
+        for(int i=0; i<k; i++){
+            fscanf(fp, "%d ", &indices[i]);
+        }
+        *j = k;
+        fclose(fp);
     }
-    *n = k-1;
-    fscanf(fp, "%d", &k);
-    cudaMalloc((void**)&indices, (k+1) * sizeof(int));
-    for(int i=0; i<k; i++){
-        fscanf(fp, "%d", &indices[i]);
-    }
-    fclose(fp);
+    printf("%s\n", filename);
 }
 
+void load_graph_sizes(char *filename, int *n, int *j)
+{
+    FILE *fp = fopen(filename, "r");
+    int n1, j1;
+    if(fp != NULL){
+        fscanf(fp, "%d %d ", &n1, &j1);
+        *n = n1;
+        *j = j1;
+        fclose(fp);
+    }
+}
+
+void load_graph(char *filename, int *indptr, int *indices)
+{
+    FILE *fp = fopen(filename, "r");
+    int n, k, d;
+    if(fp != NULL){
+        fscanf(fp, "%d %d %d ", &n, &k, &d);
+        for(int i=0; i<n; i++){
+            fscanf(fp, "%d ", &indptr[i]);
+        }
+        for(int i=0; i<k; i++){
+            fscanf(fp, "%d ", &indices[i]);
+        }
+        fclose(fp);
+    }
+}
 
 int main()
 {
-    int *n;
+    int N, k;
     double *numbering;
     float *mask, *roots;
     int *indptr, *indices;
+    int *indptr_gpu, *indices_gpu;
+    char *filename = "../graphs/graph_10.txt";
 
-    load_graph("../graphs/graph_10.txt", indptr, indices, n);
-
-    int N = (*n);
+    load_graph_sizes(filename, &N, &k);
+    if(!N || !k){
+        printf("Errore durante la lettura del file\n");
+        return 1;
+    }
+    indptr = (int *)malloc(N * sizeof(int));
+    indices = (int *)malloc(k * sizeof(int));
+    load_graph(filename, indptr, indices);
 
     cudaMalloc((void**)&numbering, (N+1)*sizeof(double));
     cudaMalloc((void**)&mask, (N+1)*sizeof(float));
     cudaMalloc((void**)&roots, (N+1)*sizeof(float));
+    cudaMalloc((void**)&indptr_gpu, (N+1)*sizeof(int));
+    cudaMalloc((void**)&indices_gpu, (k+1)*sizeof(int));
+
+    cudaMemcpy(indptr_gpu, indptr, (N+1)*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(indices_gpu, indptr, (k+1)*sizeof(int), cudaMemcpyHostToDevice);
 
     init_array_double<<< 1, N >>>(numbering, 0);
     init_array<<< 1, N >>>(mask, 1);
     init_array_consecutive<<< 1, N >>>(roots);
 
     double delta = pow(8, ceil(log(N) / log(5/4)));
-    int extra_space = N / 16 + N / 16*16 + 1;
     int flag = 1;
+    set<double> numbering_copy;
     cudaDeviceSynchronize();
     while(flag && delta >= 1){
-        get_class_components(numbering, indptr, indices, mask, N, roots);
+        get_class_components(numbering, indptr_gpu, indices_gpu, mask, N, roots);
         cudaDeviceSynchronize();
-        stratify<<< 1, N >>>(numbering, roots, indptr, indices, delta, N);
+        stratify<<< 1, N >>>(numbering, roots, indptr_gpu, indices_gpu, delta, N);
         cudaDeviceSynchronize();
         flag = 0;
         delta /= 8;
-        set<double> numbering_copy;
         int oldsize = 0;
         for(int i=0; i<N && !flag; i++){
             numbering_copy.insert(numbering[i]);
@@ -752,6 +794,7 @@ int main()
                 flag = 1;
             oldsize = numbering_copy.size();
         }
+        numbering_copy.clear();
     }
     return 0;
 }
