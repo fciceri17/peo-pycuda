@@ -1,6 +1,7 @@
 import random
 import math
 import networkx as nx
+import os
 
 def generateGraph(N, DENSITY, debug=False):
     M = int((N * (N-1) / 2) * DENSITY)
@@ -60,4 +61,20 @@ def generateChordalGraph(N, DENSITY, debug=False):
             if n > i:
                 edgelist.append((i, n))
     return nx.Graph(edgelist)
+
+
+def exportGraphCsr(G, filename="graph.txt", path="../graphs"):
+    destination = path + "/" + filename
+    Gcsr = nx.to_scipy_sparse_matrix(G)
+    out_file = open(destination, "w")
+    out_file.write(str(len(Gcsr.indptr)) + "\n")
+    for i in Gcsr.indptr:
+        out_file.write(str(i) + "\n")
+    out_file.write(str(len(Gcsr.indices)) + "\n")
+    for i in Gcsr.indices:
+        out_file.write(str(i) + "\n")
+    out_file.write(str(len(Gcsr.data)) + "\n")
+    for i in Gcsr.data:
+        out_file.write(str(i) + "\n")
+    out_file.close()
 

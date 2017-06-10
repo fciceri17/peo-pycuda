@@ -1,0 +1,9 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "0.1.0",
+    "command": "nvcc",
+    "isShellCommand": true,
+    "args": ["${workspaceRoot}/peo_pycuda/main.cu", "--ptx", "-rdc=true", "-lcudadevrt", "-arch=sm_52", "-m64", "-IC:\\Users\\cesar\\PycharmProjects\\peo-pycuda\\scripts\\..\\lib", "-Ic:\\users\\cesar\\anaconda3\\lib\\site-packages\\pycuda\\cuda kernel.cu"],
+    "showOutput": "always"
+}
