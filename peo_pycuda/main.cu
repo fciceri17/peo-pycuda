@@ -110,8 +110,12 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
 {
     float *changes, *sum;
     
-    cudaMalloc((void**)&changes, sizeof(float) * n);
-    cudaMalloc((void**)&sum, sizeof(float) * n);
+    /*
+    cudaMalloc((void**)&changes, sizeof(float) * (n+1));
+    cudaMalloc((void**)&sum, sizeof(float) * (n+1));
+    */
+    changes = (float *)malloc(sizeof(float) * (n+1));
+    sum = (float *)malloc(sizeof(float) * (n+1));
     
     do{
         init_array<<< 1, n >>>(changes, 0);
@@ -695,35 +699,13 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaFree(nic_sum);
 }
 
-void load_graph(char *filename, int *indptr, int *indices, int *n, int *j)
-{
-    FILE *fp = fopen(filename, "r");
-    int k;
-    if(fp){
-        fscanf(fp, "%d ", &k);
-        indptr = (int *)malloc(k * sizeof(int));
-        for(int i=0; i<k; i++){
-            fscanf(fp, "%d ", &indptr[i]);
-        }
-        *n = k-1;
-        fscanf(fp, "%d ", &k);
-        indices = (int *)malloc(k * sizeof(int));
-        for(int i=0; i<k; i++){
-            fscanf(fp, "%d ", &indices[i]);
-        }
-        *j = k;
-        fclose(fp);
-    }
-    printf("%s\n", filename);
-}
-
 void load_graph_sizes(char *filename, int *n, int *j)
 {
     FILE *fp = fopen(filename, "r");
     int n1, j1;
     if(fp != NULL){
         fscanf(fp, "%d %d ", &n1, &j1);
-        *n = n1;
+        *n = n1 - 1;
         *j = j1;
         fclose(fp);
     }
@@ -748,7 +730,7 @@ void load_graph(char *filename, int *indptr, int *indices)
 int main()
 {
     int N, k;
-    double *numbering;
+    double *numbering, *numbering_gpu;
     float *mask, *roots;
     int *indptr, *indices;
     int *indptr_gpu, *indices_gpu;
@@ -759,20 +741,21 @@ int main()
         printf("Errore durante la lettura del file\n");
         return 1;
     }
-    indptr = (int *)malloc(N * sizeof(int));
+    indptr = (int *)malloc((N+1) * sizeof(int));
     indices = (int *)malloc(k * sizeof(int));
     load_graph(filename, indptr, indices);
 
-    cudaMalloc((void**)&numbering, (N+1)*sizeof(double));
-    cudaMalloc((void**)&mask, (N+1)*sizeof(float));
-    cudaMalloc((void**)&roots, (N+1)*sizeof(float));
+    numbering = (double *)malloc(N*sizeof(double));
+    cudaMalloc((void**)&numbering_gpu, N*sizeof(double));
+    cudaMalloc((void**)&mask, N*sizeof(float));
+    cudaMalloc((void**)&roots, N*sizeof(float));
     cudaMalloc((void**)&indptr_gpu, (N+1)*sizeof(int));
-    cudaMalloc((void**)&indices_gpu, (k+1)*sizeof(int));
+    cudaMalloc((void**)&indices_gpu, k*sizeof(int));
 
     cudaMemcpy(indptr_gpu, indptr, (N+1)*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(indices_gpu, indptr, (k+1)*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(indices_gpu, indptr, k*sizeof(int), cudaMemcpyHostToDevice);
 
-    init_array_double<<< 1, N >>>(numbering, 0);
+    init_array_double<<< 1, N >>>(numbering_gpu, 0);
     init_array<<< 1, N >>>(mask, 1);
     init_array_consecutive<<< 1, N >>>(roots);
 
@@ -781,20 +764,26 @@ int main()
     set<double> numbering_copy;
     cudaDeviceSynchronize();
     while(flag && delta >= 1){
-        get_class_components(numbering, indptr_gpu, indices_gpu, mask, N, roots);
+        printf("1\n");
+        get_class_components(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
         cudaDeviceSynchronize();
-        stratify<<< 1, N >>>(numbering, roots, indptr_gpu, indices_gpu, delta, N);
+        printf("2\n");
+        stratify<<< 1, N >>>(numbering_gpu, roots, indptr_gpu, indices_gpu, delta, N);
         cudaDeviceSynchronize();
         flag = 0;
         delta /= 8;
         int oldsize = 0;
+        printf("3\n");
+        cudaMemcpy(numbering, numbering_gpu, N*sizeof(double), cudaMemcpyDeviceToHost);
         for(int i=0; i<N && !flag; i++){
             numbering_copy.insert(numbering[i]);
             if(numbering_copy.size() == oldsize)
                 flag = 1;
             oldsize = numbering_copy.size();
         }
+        printf("4\n");
         numbering_copy.clear();
+        printf("5\n");
     }
     return 0;
 }
