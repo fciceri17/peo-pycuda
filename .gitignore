@@ -101,3 +101,6 @@ ENV/
 
 # repo-specific
 .idea/
+
+/scripts/main.exp
+/scripts/main.lib
