@@ -132,7 +132,7 @@ __global__ void get_class_components_global(double *numbering, int *indptr, int 
 {
 
     get_class_components(numbering, indptr, indices, mask, n, roots);
-    
+
 }
 
 __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level)
@@ -670,7 +670,7 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaDeviceSynchronize();
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
-    
+
     if(irn_sum[n] == 0)
         stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
     else{
@@ -758,7 +758,7 @@ int main()
 
     init_array_double<<< 1, N >>>(numbering_gpu, 0);
     init_array<<< 1, N >>>(mask, 1);
-    init_array_consecutive<<< 1, N >>>(roots);
+//    init_array_consecutive<<< 1, N >>>(roots);
 
     double delta = pow(8, ceil(log(N) / log(1.25)));
     int flag = 1;
@@ -770,6 +770,7 @@ int main()
         printf("INITS kernel launch failed with error \"%s\".\n",
                 cudaGetErrorString(cudaerr));
     while(flag && delta >= 1){
+        init_array_consecutive<<< 1, N >>>(roots);
         get_class_components_global<<< 1, 1, sharedmemsize >>>(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
         cudaerr = cudaDeviceSynchronize();
         if (cudaerr != cudaSuccess){
@@ -784,7 +785,7 @@ int main()
         flag = 0;
         delta /= 8;
         int oldsize = 0;
-        print_array_global<<< 1, N >>>(numbering_gpu);
+//        print_array_global<<< 1, N >>>(numbering_gpu);
         cudaerr = cudaDeviceSynchronize();
         if (cudaerr != cudaSuccess)
             printf("PRINT kernel launch failed with error \"%s\".\n",
@@ -801,6 +802,7 @@ int main()
     for(int i=0; i<N; i++)
         printf("%lf ", numbering[i]);
     printf("\n");
+    printf("%d\n", numbering_copy.size());
 
     cudaFree(numbering_gpu);
     cudaFree(mask);
