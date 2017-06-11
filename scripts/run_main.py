@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 import math
 import os
+import time
 
 from peo_pycuda.chordal_gen import generateChordalGraph
 
@@ -373,6 +374,12 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
         }
 
         inc_delta<<< 1, n >>>(numbering, other_array, delta);
+        cudaFree(adjacencies);
+        cudaFree(level);
+        cudaFree(in_component);
+        cudaFree(arr_odd);
+        cudaFree(arr_even);
+        cudaFree(sum);
     }else{
         //number of members of D
         parallel_prefix(D, D_sum, n);
@@ -423,6 +430,9 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
     cudaFree(D_diff_first_neigh_diff);
     cudaFree(common_neighbors);
     cudaFree(common_neighbors_sum);
+    cudaFree(C_D_components_sizes);
+    cudaFree(first);
+    cudaFree(second);
 }
 
 
@@ -657,28 +667,22 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
     cudaDeviceSynchronize();
-    //if(icc_sum[n] <= 1) return;
     
     richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n], is_richer_neighbor, high_degree, neighbors_in_c);
     cudaDeviceSynchronize();
+    parallel_prefix(high_degree, hd_sum, n);
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
-    /*
-    print_array(is_richer_neighbor, n);
-    print_array(high_degree, n);
-    print_array(neighbors_in_c, n);
-    */
-    if(irn_sum[n] == 0)
+    
+    if(irn_sum[n] == 0){
         stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
-    else{
-        parallel_prefix(high_degree, hd_sum, n);
-        cudaDeviceSynchronize();
-        if(hd_sum[n] >= irn_sum[n])
+    }else{
+        if(hd_sum[n] >= irn_sum[n]){
             stratify_high_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, irn_sum[n], icc_sum[n]);
-        else
+        }else{
             stratify_low_degree(numbering, is_class_component, indptr, indices, delta, n, is_richer_neighbor, icc_sum[n]);
+        }
     }
-    cudaDeviceSynchronize();
 
     cudaFree(is_richer_neighbor);
     cudaFree(high_degree);
@@ -701,25 +705,35 @@ split_classes = cuda_module.get_function("get_class_components_global")
 N = 50
 DENSITY = 0.5
 
-G = generateChordalGraph(N, DENSITY, debug=False)
+for i in range(1):
+    G = generateChordalGraph(N, DENSITY, debug=False)
 
-Gcsr = nx.to_scipy_sparse_matrix(G)
-numbering = np.zeros(N, dtype=np.float64)
+    Gcsr = nx.to_scipy_sparse_matrix(G)
+    numbering = np.zeros(N, dtype=np.float64)
 
-delta = 8 ** math.ceil(math.log(N, 5/4))
+    delta = 8 ** math.ceil(math.log(N, 5/4))
 
-extra_space = int(N / 16 + N / 16**2 + 1)
-print(Gcsr)
-unique_numberings = np.unique(numbering)
-while len(unique_numberings) < len(numbering) and delta >= 1:
-    roots = np.arange(N, dtype=np.float32)
-    split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
-    stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
-    delta /= 8
+    extra_space = int(N / 16 + N / 16**2 + 1)
     unique_numberings = np.unique(numbering)
-print(numbering)
+    start = time.time()
+    while len(unique_numberings) < len(numbering) and delta >= 1:
+        roots = np.arange(N, dtype=np.float32)
+        split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
+        stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
+        delta /= 8
+        unique_numberings = np.unique(numbering)
+    end = time.time()
 
-if(len(unique_numberings) == len(numbering)):
-    print("CHORDAL")
-else:
-    print("NOT CHORDAL")
+    if(len(unique_numberings) == len(numbering)):
+        print("CHORDAL: "+str(end-start))
+    else:
+        print("NOT CHORDAL: "+str(end-start))
+
+    start = time.time()
+    if(nx.is_chordal(G)):
+        end = time.time()
+        print("CHORDAL: "+str(end-start))
+    else:
+        end = time.time()
+        print("NOT CHORDAL: "+str(end-start))
+    print()
