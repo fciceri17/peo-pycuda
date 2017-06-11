@@ -4,6 +4,6 @@
     "version": "0.1.0",
     "command": "nvcc",
     "isShellCommand": true,
-    "args": ["${workspaceRoot}/peo_pycuda/main.cu", "-rdc=true", "-lcudadevrt", "-arch=sm_52", "-m64", "-IC:lib", "-o=scripts/main.exe"],
+    "args": ["${workspaceRoot}/peo_pycuda/main.cu", "-rdc=true", "-lcudadevrt", "-arch=sm_52", "-m64", "-IC:lib", "-o=scripts/main.exe", "-g", "-G", "-DDEBUG", "-DVERBOSE"],
     "showOutput": "always"
 }

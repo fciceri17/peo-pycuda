@@ -58,7 +58,6 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
     } while (numElts > 1);
 
     prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums);
-
 }
 
 __global__ void copy_array(double *a, double *b)
@@ -88,11 +87,11 @@ __global__ void init_array_consecutive(float *arr)
 __global__ void split_classes(double *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
 {
     const int i = threadIdx.x;
+    float min = roots[i];
     if(mask[i] == 0){
         roots[i] = -1;
         return;
     }
-    int min = roots[i];
 
     for(int j = indptr[i]; j < indptr[i+1]; j++){
         if(mask[indices[j]] == 1 && numbering[i] == numbering[indices[j]] && roots[indices[j]] < min){
@@ -109,7 +108,6 @@ __global__ void split_classes(double *numbering, int *indptr, int *indices, floa
 __host__ __device__ void get_class_components(double *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
     float *changes, *sum;
-    
 
     cudaMalloc((void**)&changes, sizeof(float) * (n+1));
     cudaMalloc((void**)&sum, sizeof(float) * (n+1));
@@ -125,6 +123,7 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
         parallel_prefix(changes, sum, n);
         cudaDeviceSynchronize();
     }while(sum[n] > 0);
+
     cudaFree(changes);
     cudaFree(sum);
 }
@@ -309,10 +308,8 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
     cudaMalloc((void**)&common_neighbors, pps_arr_size);
     cudaMalloc((void**)&common_neighbors_sum, pps_arr_size);
 
-
     cudaMalloc((void**)&C_D_components_sizes, pps_arr_size);
     init_array<<< 1, n >>>(C_D_components_sizes, 0);
-
 
     stratify_none_getD<<< 1, n >>>(is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
@@ -673,11 +670,7 @@ __global__ void stratify(double *numbering, float *roots, int *indptr, int *indi
     cudaDeviceSynchronize();
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
-    /*
-    print_array(is_richer_neighbor, n);
-    print_array(high_degree, n);
-    print_array(neighbors_in_c, n);
-    */
+    
     if(irn_sum[n] == 0)
         stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
     else{
@@ -728,6 +721,12 @@ void load_graph(char *filename, int *indptr, int *indices)
     }
 }
 
+__global__ void print_array_global(double *a)
+{
+    const int i = threadIdx.x;
+    printf("%lf ", a[i]);
+}
+
 int main()
 {
     int N, k;
@@ -736,6 +735,7 @@ int main()
     int *indptr, *indices;
     int *indptr_gpu, *indices_gpu;
     char *filename = "../graphs/graph_10.txt";
+    cudaError_t cudaerr;
 
     load_graph_sizes(filename, &N, &k);
     if(!N || !k){
@@ -743,18 +743,18 @@ int main()
         return 1;
     }
     indptr = (int *)malloc((N+1) * sizeof(int));
-    indices = (int *)malloc(k * sizeof(int));
+    indices = (int *)malloc((k+1) * sizeof(int));
     load_graph(filename, indptr, indices);
 
-    numbering = (double *)malloc(N*sizeof(double));
-    cudaMalloc((void**)&numbering_gpu, N*sizeof(double));
-    cudaMalloc((void**)&mask, N*sizeof(float));
-    cudaMalloc((void**)&roots, N*sizeof(float));
+    numbering = (double *)malloc((N+1)*sizeof(double));
+    cudaMalloc((void**)&numbering_gpu, (N+1)*sizeof(double));
+    cudaMalloc((void**)&mask, (N+1)*sizeof(float));
+    cudaMalloc((void**)&roots, (N+1)*sizeof(float));
     cudaMalloc((void**)&indptr_gpu, (N+1)*sizeof(int));
-    cudaMalloc((void**)&indices_gpu, k*sizeof(int));
+    cudaMalloc((void**)&indices_gpu, (k+1)*sizeof(int));
 
     cudaMemcpy(indptr_gpu, indptr, (N+1)*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(indices_gpu, indptr, k*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(indices_gpu, indices, (k+1)*sizeof(int), cudaMemcpyHostToDevice);
 
     init_array_double<<< 1, N >>>(numbering_gpu, 0);
     init_array<<< 1, N >>>(mask, 1);
@@ -762,19 +762,33 @@ int main()
 
     double delta = pow(8, ceil(log(N) / log(1.25)));
     int flag = 1;
+    int extra_space = N / 16 + N / 16*16 + 1;
+    unsigned int sharedmemsize = sizeof(float) * 2 * (N + extra_space + 10);
     set<double> numbering_copy;
-    cudaDeviceSynchronize();
+    cudaerr = cudaDeviceSynchronize();
+    if (cudaerr != cudaSuccess)
+        printf("INITS kernel launch failed with error \"%s\".\n",
+                cudaGetErrorString(cudaerr));
     while(flag && delta >= 1){
-        printf("1\n");
-        get_class_components_global<<< 1,1 >>>(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
-        cudaDeviceSynchronize();
-        printf("2\n");
-        stratify<<< 1, N >>>(numbering_gpu, roots, indptr_gpu, indices_gpu, delta, N);
-        cudaDeviceSynchronize();
+        get_class_components_global<<< 1, 1, sharedmemsize >>>(numbering_gpu, indptr_gpu, indices_gpu, mask, N, roots);
+        cudaerr = cudaDeviceSynchronize();
+        if (cudaerr != cudaSuccess){
+            printf("CLASS COMPONENT kernel launch failed with error \"%s: %s\".\n",
+                cudaGetErrorName(cudaerr), cudaGetErrorString(cudaerr));
+        }
+        stratify<<< 1, N, sharedmemsize >>>(numbering_gpu, roots, indptr_gpu, indices_gpu, delta, N);
+        cudaerr = cudaDeviceSynchronize();
+        if (cudaerr != cudaSuccess)
+            printf("STRATIFY kernel launch failed with error \"%s\".\n",
+                cudaGetErrorString(cudaerr));
         flag = 0;
         delta /= 8;
         int oldsize = 0;
-        printf("3\n");
+        print_array_global<<< 1, N >>>(numbering_gpu);
+        cudaerr = cudaDeviceSynchronize();
+        if (cudaerr != cudaSuccess)
+            printf("PRINT kernel launch failed with error \"%s\".\n",
+                cudaGetErrorString(cudaerr));
         cudaMemcpy(numbering, numbering_gpu, N*sizeof(double), cudaMemcpyDeviceToHost);
         for(int i=0; i<N && !flag; i++){
             numbering_copy.insert(numbering[i]);
@@ -782,9 +796,23 @@ int main()
                 flag = 1;
             oldsize = numbering_copy.size();
         }
-        printf("4\n");
-        numbering_copy.clear();
-        printf("5\n");
     }
+
+    for(int i=0; i<N; i++)
+        printf("%lf ", numbering[i]);
+    printf("\n");
+
+    cudaFree(numbering_gpu);
+    cudaFree(mask);
+    cudaFree(indptr_gpu);
+    cudaFree(indices_gpu);
+    cudaFree(roots);
+
+    free(indptr);
+    free(indices);
+    free(numbering);
+
+    system("pause");
+
     return 0;
 }

@@ -115,6 +115,8 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
         cudaDeviceSynchronize();
     }while(sum[n] > 0);
     
+    cudaFree(changes);
+    cudaFree(sum);
 }
 
 __global__ void get_class_components_global(double *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
