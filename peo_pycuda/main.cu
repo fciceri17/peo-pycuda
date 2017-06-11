@@ -791,6 +791,7 @@ int main()
             printf("PRINT kernel launch failed with error \"%s\".\n",
                 cudaGetErrorString(cudaerr));
         cudaMemcpy(numbering, numbering_gpu, N*sizeof(double), cudaMemcpyDeviceToHost);
+        numbering_copy.clear();
         for(int i=0; i<N && !flag; i++){
             numbering_copy.insert(numbering[i]);
             if(numbering_copy.size() == oldsize)
