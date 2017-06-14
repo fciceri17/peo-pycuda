@@ -20,7 +20,7 @@ cuda_code = """
 
 extern "C" {
 
-__global__ void stratify(double *numbering, float *roots, int *indptr, int *indices, double delta, int n);
+__global__ void stratify(long long int *numbering, float *roots, int *indptr, int *indices, long long int delta, int n);
 
 __host__ __device__ void print_array(float *a, int n)
 {
@@ -79,7 +79,7 @@ __global__ void init_array(float *arr, float val)
 
 }
 
-__global__ void split_classes(double *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
+__global__ void split_classes(long long int *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
 {
     const int i = threadIdx.x;
     if(mask[i] == 0){
@@ -100,7 +100,7 @@ __global__ void split_classes(double *numbering, int *indptr, int *indices, floa
     }
 }
 
-__host__ __device__ void get_class_components(double *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
+__host__ __device__ void get_class_components(long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
     float *changes, *sum;
     
@@ -120,7 +120,7 @@ __host__ __device__ void get_class_components(double *numbering, int *indptr, in
     cudaFree(sum);
 }
 
-__global__ void get_class_components_global(double *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
+__global__ void get_class_components_global(long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
 
     get_class_components(numbering, indptr, indices, mask, n, roots);
@@ -169,7 +169,7 @@ __global__ void compute_component_sizes(float *roots, float *sizes)
 }
 
 
-__global__ void richer_neighbors(double *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
+__global__ void richer_neighbors(long long int *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
     const int i = threadIdx.x;
     is_richer_neighbor[i] = 0;
@@ -189,14 +189,14 @@ __global__ void richer_neighbors(double *numbering, float *roots, int *indptr, i
     }
 }
 
-__global__ void in_class(double *numbering, float *roots, int *indptr, int *indices, int c, float *is_class_component)
+__global__ void in_class(long long int *numbering, float *roots, int *indptr, int *indices, int c, float *is_class_component)
 {
     const int i = threadIdx.x;
     is_class_component[i] = 0;
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
-__global__ void in_class_special(double *numbering, float *roots, int *indptr, int *indices, int c, float *is_class_component)
+__global__ void in_class_special(long long int *numbering, float *roots, int *indptr, int *indices, int c, float *is_class_component)
 {
     const int i = threadIdx.x;
     is_class_component[i] = -1;
@@ -230,7 +230,7 @@ __global__ void sum_array_to_list(float *sums, float *list)
     list[(int)sums[i+1] - 1] = i;
 }
 
-__global__ void add_i(double *numbering, float *D_sum, int *indptr, int *indices, int n)
+__global__ void add_i(long long int *numbering, float *D_sum, int *indptr, int *indices, int n)
 {
     const int i = threadIdx.x;
     
@@ -252,7 +252,7 @@ __global__ void find_first(float *a, int *first)
     if(a[i+1] == 1 && a[i] == 0) *first = i;
 }
 
-__global__ void inc_delta(double *numbering, float *other_array, double delta)
+__global__ void inc_delta(long long int *numbering, float *other_array, long long int delta)
 {
     const int i = threadIdx.x;
     if(other_array[i] == 1) numbering[i] += delta;
@@ -274,7 +274,7 @@ __global__ void find_common_neighbors(float *is_class_component, int *indptr, in
     if(d == 2) r[i] = 1;
 }
 
-__device__ void stratify_none(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float c)
+__device__ void stratify_none(long long int *numbering, float *is_class_component, int *indptr, int *indices, long long int delta, int n, float c)
 {
     float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors, *C_D_components;
     float *D_sum, *D_clique_sum, *D_diff_sum, *D_diff_first_neigh_sum, *common_neighbors_sum, *C_D_components_sizes;
@@ -437,7 +437,7 @@ __device__ void stratify_none(double *numbering, float *is_class_component, int 
 
 
 
-__device__ void stratify_high_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
+__device__ void stratify_high_degree(long long int *numbering, float *is_class_component, int *indptr, int *indices, long long int delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
 {
     float *adjacencies;
     cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
@@ -514,7 +514,7 @@ __device__ void stratify_high_degree(double *numbering, float *is_class_componen
 
 }
 
-__device__ void stratify_low_degree(double *numbering, float *is_class_component, int *indptr, int *indices, double delta, int n, float *is_richer_neighbor, float c)
+__device__ void stratify_low_degree(long long int *numbering, float *is_class_component, int *indptr, int *indices, long long int delta, int n, float *is_richer_neighbor, float c)
 {
     float *D, *CuB, *CuB_D, *CuB_D_components, *CuB_D_components_sum;
     int *b_root;
@@ -644,7 +644,7 @@ __device__ void stratify_low_degree(double *numbering, float *is_class_component
     cudaFree(CuB_D_components_sum);
 }
 
-__global__ void stratify(double *numbering, float *roots, int *indptr, int *indices, double delta, int n)
+__global__ void stratify(long long int *numbering, float *roots, int *indptr, int *indices, long long int delta, int n)
 {
     const int i = threadIdx.x;
     if(roots[i] != i) return;
@@ -709,7 +709,7 @@ for i in range(1):
     G = generateChordalGraph(N, DENSITY, debug=False)
 
     Gcsr = nx.to_scipy_sparse_matrix(G)
-    numbering = np.zeros(N, dtype=np.float64)
+    numbering = np.zeros(N, dtype=np.int64)
 
     delta = 8 ** math.ceil(math.log(N, 5/4))
 
@@ -719,7 +719,7 @@ for i in range(1):
     while len(unique_numberings) < len(numbering) and delta >= 1:
         roots = np.arange(N, dtype=np.float32)
         split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
-        stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.float64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
+        stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), np.int64(delta), np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
         delta /= 8
         unique_numberings = np.unique(numbering)
     end = time.time()
