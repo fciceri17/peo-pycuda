@@ -4,7 +4,7 @@ import math
 import os
 import time
 
-from peo_pycuda.chordal_gen import generateChordalGraph
+from peo_pycuda.chordal_gen import generateChordalGraph, generateGraph
 
 import pycuda.autoinit
 import pycuda.driver as cuda
@@ -51,7 +51,7 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
         numElts = numBlocks;
     } while (numElts > 1);
 
-    g_scanBlockSums = (float**) malloc(level * sizeof(float*));
+    cudaMalloc((void**)&g_scanBlockSums, level * sizeof(float*));
 
     numElts = num_elements;
     level = 0;
@@ -70,19 +70,6 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
 
     prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums);
     cudaDeviceSynchronize();
-    numElts = num_elements;
-    level = 0;
-    do
-    {
-        unsigned int numBlocks =
-            max(1, (int)ceil((float)numElts / (2.f * blockSize)));
-        if (numBlocks > 1)
-        {
-            cudaFree(g_scanBlockSums[level++]);
-        }
-        numElts = numBlocks;
-    } while (numElts > 1);
-    free(g_scanBlockSums);
 
 }
 
@@ -91,6 +78,13 @@ __global__ void init_array(float *arr, float val)
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     arr[i] = val;
 
+}
+
+__global__ void am_unique(unsigned long long int *numbering, unsigned long long int root_n, float *unique)
+{
+    const int i = threadIdx.x;
+    if(numbering[i]==root_n) unique[i]=1;
+    else unique[i]=0;
 }
 
 __global__ void split_classes(unsigned long long int *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
@@ -129,7 +123,7 @@ __host__ __device__ void get_class_components(unsigned long long int *numbering,
         parallel_prefix(changes, sum, n);
         cudaDeviceSynchronize();
     }while(sum[n] > 0);
-    
+
     cudaFree(changes);
     cudaFree(sum);
 }
@@ -664,11 +658,25 @@ __global__ void stratify(unsigned long long int *numbering, float *roots, int *i
     // printf("%ld, root %f\\n", delta, roots[i]);
     if(roots[i] != i) return;
 
+    unsigned int pps_arr_size  = (n+1)*sizeof(float);
+
+    float *unique, *unique_sum;
+    cudaMalloc((void**)&unique, pps_arr_size);
+    cudaMalloc((void**)&unique_sum, pps_arr_size);
+
+    am_unique<<< 1, n >>>(numbering, numbering[i], unique);
+    cudaDeviceSynchronize();
+    parallel_prefix(unique, unique_sum, n);
+    cudaDeviceSynchronize();
+    if(unique_sum[n]==1){
+        cudaFree(unique);
+        cudaFree(unique_sum);
+        return;
+    }
 
     float *is_richer_neighbor, *high_degree, *is_class_component, *neighbors_in_c;
     float *irn_sum, *hd_sum, *icc_sum, *nic_sum;
 
-    unsigned int pps_arr_size  = (n+1)*sizeof(float);
     cudaMalloc((void**)&is_richer_neighbor, pps_arr_size);
     cudaMalloc((void**)&high_degree, pps_arr_size);
     cudaMalloc((void**)&is_class_component, pps_arr_size);
@@ -708,6 +716,8 @@ __global__ void stratify(unsigned long long int *numbering, float *roots, int *i
     cudaFree(hd_sum);
     cudaFree(icc_sum);
     cudaFree(nic_sum);
+    cudaFree(unique);
+    cudaFree(unique_sum);
 }
 
 }
@@ -718,37 +728,40 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 10
-DENSITY = 0.5
+N = 90
+DENSITY = 0.4
 
-for i in range(100):
-    G = generateChordalGraph(N, DENSITY, debug=False)
-    Gcsr = nx.to_scipy_sparse_matrix(G)
-    numbering = np.zeros(N, dtype=np.uint64)
+G = generateChordalGraph(N, DENSITY, debug=False)
+# G = generateGraph(N, DENSITY)
+Gcsr = nx.to_scipy_sparse_matrix(G)
+numbering = np.zeros(N, dtype=np.uint64)
 
-    delta = np.uint64(8 ** math.ceil(math.log(N, 5/4)))
+delta = np.uint64(8 ** math.ceil(math.log(N, 5/4)))
 
-    extra_space = int(N / 16 + N / 16**2 + 1)
+extra_space = int(N / 16 + N / 16**2 + 1)
+unique_numberings = np.unique(numbering)
+start = time.time()
+i=0
+while len(unique_numberings) < len(numbering) and delta >= 1:
+    roots = np.arange(N, dtype=np.float32)
+    split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
+    stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), delta, np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
+    delta = np.uint64(delta/8)
     unique_numberings = np.unique(numbering)
-    start = time.time()
-    while len(unique_numberings) < len(numbering) and delta >= 1:
-        roots = np.arange(N, dtype=np.float32)
-        split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
-        stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), delta, np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
-        delta = np.uint64(delta/8)
-        unique_numberings = np.unique(numbering)
-    end = time.time()
-    # print(unique_numberings)
-    if(len(unique_numberings) == len(numbering)):
-        print("CHORDAL: "+str(end-start))
-    else:
-        print("NOT CHORDAL: "+str(end-start))
+    i+=1
+    print(len(unique_numberings))
+end = time.time()
+# print(unique_numberings)
+if(len(unique_numberings) == len(numbering)):
+    print("CHORDAL: "+str(end-start))
+else:
+    print("NOT CHORDAL: "+str(end-start))
 
-    # start = time.time()
-    # if(nx.is_chordal(G)):
-    #     end = time.time()
-    #     print("CHORDAL: "+str(end-start))
-    # else:
-    #     end = time.time()
-    #     print("NOT CHORDAL: "+str(end-start))
-    # print()
+start = time.time()
+if(nx.is_chordal(G)):
+    end = time.time()
+    print("CHORDAL: "+str(end-start))
+else:
+    end = time.time()
+    print("NOT CHORDAL: "+str(end-start))
+# print()
