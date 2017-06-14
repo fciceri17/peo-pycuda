@@ -53,6 +53,15 @@ def generateChordalGraph(N, DENSITY, debug=False):
             graph[n2].add(n+1)
             n += 1
             m += 2
+    while m<M:
+        n1 = random.randint(0, N - 1)
+        n2 = random.randint(0, N - 1)
+        if n1 != n2 and n2 not in graph[n1]:
+            common_neighbors = graph[n1].intersection(graph[n2])
+            if len(common_neighbors)>0:
+                graph[n1].add(n2)
+                graph[n2].add(n1)
+                m += 1
     if debug:
         print("Generated, 1: "+str(count1)+", 2: "+str(count2))
     edgelist = []
@@ -75,4 +84,3 @@ def exportGraphCsr(G, filename="graph.txt", path="../graphs"):
     for i in Gcsr.data:
         out_file.write(str(i) + "\n")
     out_file.close()
-
