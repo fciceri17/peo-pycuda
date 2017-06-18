@@ -15,6 +15,7 @@ from pycuda.compiler import DynamicSourceModule
 cuda_code = """
 #include <stdio.h>
 #include <scan.cu>
+#include <mainlib.cu>
 #include <stratify_none.cu>
 #include <stratify_high_degree.cu>
 #include <stratify_low_degree.cu>
@@ -23,118 +24,6 @@ extern "C" {
 
 __global__ void stratify(unsigned long long int *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta, int n);
 
-__host__ __device__ void print_array(float *a, int n)
-{
-    for(int i=0; i<n; i++)
-        printf("%f ", a[i]);
-    printf("\\n");
-}
-
-__host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
-{
-
-    num_elements += 1;
-    float** g_scanBlockSums;
-
-    unsigned int blockSize = BLOCK_SIZE; // max size of the thread blocks
-    unsigned int numElts = num_elements;
-
-    int level = 0;
-
-    do
-    {
-        unsigned int numBlocks =
-            max(1, (int)ceil((float)numElts / (2.f * blockSize)));
-        if (numBlocks > 1)
-        {
-            level++;
-        }
-        numElts = numBlocks;
-    } while (numElts > 1);
-
-    cudaMalloc((void**)&g_scanBlockSums, level * sizeof(float*));
-
-    numElts = num_elements;
-    level = 0;
-
-    do
-    {
-        unsigned int numBlocks =
-            max(1, (int)ceil((float)numElts / (2.f * blockSize)));
-        if (numBlocks > 1)
-        {
-            cudaMalloc((void**) &g_scanBlockSums[level++],
-                                      numBlocks * sizeof(float));
-        }
-        numElts = numBlocks;
-    } while (numElts > 1);
-
-    prescanArrayRecursive(d_odata, d_idata, num_elements, 0, g_scanBlockSums);
-    cudaDeviceSynchronize();
-
-}
-
-// Sets all elements in an array to value val
-__global__ void init_array(float *arr, float val)
-{
-    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    arr[i] = val;
-
-}
-
-// Creates an array with 1 if numbering[i] == n, 0 otherwise. If the sum of this array is >1, the component is non-singleton
-__global__ void am_unique(unsigned long long int *numbering, unsigned long long int root_n, float *unique)
-{
-    const int i = threadIdx.x;
-    if(numbering[i]==root_n) unique[i]=1;
-    else unique[i]=0;
-}
-
-// function to call on each node of the graph, sets its component root based on order in the array of indices and numbering
-// this function is called until no further changes are made to the root array, creating all components by numbering
-// a mask may be applied if components have to be searched in a restricted set of nodes
-__global__ void split_classes(unsigned long long int *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
-{
-    const int i = threadIdx.x;
-    if(mask[i] == 0){
-        roots[i] = -1;
-        return;
-    }
-    int min = roots[i];
-
-    for(int j = indptr[i]; j < indptr[i+1]; j++){
-        if(mask[indices[j]] == 1 && numbering[i] == numbering[indices[j]] && roots[indices[j]] < min){
-            min = roots[indices[j]];
-        }
-    }
-
-    if(min != roots[i]){
-        roots[i] = min;
-        changes[i] += 1;
-    }
-}
-
-// loops the split_classes function to obtain the components, identifying them by their root, that is the element in the
-// component with the smallest index in the array. Calls split_classes until no changes are made to the roots array
-__host__ __device__ void get_class_components(unsigned long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
-{
-    float *changes, *sum;
-    
-    cudaMalloc((void**)&changes, sizeof(float) * (n+1));
-    cudaMalloc((void**)&sum, sizeof(float) * (n+1));
-    
-    do{
-        init_array<<< 1, n >>>(changes, 0);
-        cudaDeviceSynchronize();
-        split_classes<<< 1, n >>>(numbering, indptr, indices, mask, roots, changes);
-        cudaDeviceSynchronize();
-        parallel_prefix(changes, sum, n);
-        cudaDeviceSynchronize();
-    }while(sum[n] > 0);
-
-    cudaFree(changes);
-    cudaFree(sum);
-}
 
 // needed for pycuda call, since get_class_components is used both inside and outside stratify calls
 __global__ void get_class_components_global(unsigned long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
@@ -142,166 +31,6 @@ __global__ void get_class_components_global(unsigned long long int *numbering, i
 
     get_class_components(numbering, indptr, indices, mask, n, roots);
     
-}
-
-
-// writes the depth of the spanning tree depth of the current node if the current node hasn't been explored yet
-// recursively called on node's neighbors, until all nodes have been explored
-__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level)
-{
-    const int i = threadIdx.x;
-    int curr_node = neighbors[i];
-    if(level[curr_node] > 0 || in_component[curr_node] == 0)
-        return;
-    level[curr_node] = curr_level;
-
-    int j = indptr[curr_node];
-    int num_neighbors = indptr[curr_node+1] - indptr[curr_node];
-    if(num_neighbors > 0){
-        __syncthreads();
-        spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1);
-        cudaDeviceSynchronize();
-    }
-}
-
-
-//outputs level of depth forming a spanning tree for a given root in component. the level-node index pair gives a unique
-//depth ordering for each node in the component
-
-__host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, float *in_component, float *level, int root, int n)
-{
-    init_array<<< 1, n >>>(level, 0);
-    cudaDeviceSynchronize();
-    level[root] = 1;
-    int j = indptr[root];
-    int num_neighbors = indptr[root + 1] - indptr[root];
-    spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2);
-    cudaDeviceSynchronize();
-    
-}
-
-// computes the size of each component in an array with component roots
-__global__ void compute_component_sizes(float *roots, float *sizes)
-{
-    const int i = threadIdx.x;
-    int root;
-    root = roots[i];
-    sizes[root] += 1;
-}
-
-// computes the set of richer neighbors of a component, and also determines whether or not the neighbor satisifes the
-// high-degree criterion need in the stratify call
-__global__ void richer_neighbors(unsigned long long int *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
-{
-    const int i = threadIdx.x;
-    is_richer_neighbor[i] = 0;
-    high_degree[i] = 0;
-    neighbors_in_c[i] = 0;
-    if(roots[i] == root) return;
-
-    for(int j = indptr[i]; j < indptr[i+1]; j++){
-        if(numbering[i] > numbering[indices[j]] && roots[indices[j]] == root){
-            is_richer_neighbor[i] = 1;
-            neighbors_in_c[i] += 1;
-        }
-    }
-    if(neighbors_in_c[i] >= 2 / 5 * c){
-        high_degree[i] = 1;
-    }
-}
-
-// extracts only elements of a component into an array based on their root
-__global__ void in_class(float *roots, int c, float *is_class_component)
-{
-    const int i = threadIdx.x;
-    is_class_component[i] = 0;
-    if(roots[i] == c) is_class_component[i] = 1;
-}
-
-// like above call, but sets value to root rather than 1
-__global__ void in_class_special(float *roots, int c, float *is_class_component)
-{
-    const int i = threadIdx.x;
-    is_class_component[i] = -1;
-    if(roots[i] == c) is_class_component[i] = c;
-}
-
-// counts neighbors in component for each node in the component. If it has c - 1 neighbors, it is connected to all
-// nodes in the component, and therefore makes it elegible to be a clique
-__global__ void is_clique(float *in_component, int *indptr, int *indices, int n, float c, float *full_connected)
-{
-    const int i = threadIdx.x;
-    full_connected[i] = 0;
-    if(in_component[i] == 0) return;
-    
-    int d = 0;
-    for(int j = indptr[i]; j < indptr[i+1]; j++){
-        if(in_component[indices[j]] == 1){
-            d += 1;
-        }
-    }
-    
-    if(d >= c-1){
-        full_connected[i] = 1;
-    }
-}
-
-// Creates a list of nonzero array indices from the parallel_prefix_sum of an array
-__global__ void sum_array_to_list(float *sums, float *list)
-{
-    const int i = threadIdx.x;
-    
-    if(sums[i+1] == sums[i]) return;
-    
-    list[(int)sums[i+1] - 1] = i;
-}
-
-// incrementally increases the numbering for each node that is in the set of nodes to be incremented
-__global__ void add_i(unsigned long long int *numbering, float *D_sum, int *indptr, int *indices, int n)
-{
-    const int i = threadIdx.x;
-    
-    if(D_sum[i+1] == D_sum[i]) return;
-    
-    numbering[i] += (unsigned long long int) D_sum[i+1];
-}
-
-// Returns elements in array a but not in array b
-__global__ void difference(float *a, float *b, float *r)
-{
-    const int i = threadIdx.x;
-    r[i] = a[i] * (1 - b[i]);
-}
-
-// finds the index of the first nonzero element in an array
-__global__ void find_first(float *a, int *first)
-{
-    const int i = threadIdx.x;
-    if(a[i+1] == 1 && a[i] == 0) *first = i;
-}
-
-// increases the numbering of the elements in other_array by amount delta
-__global__ void inc_delta(unsigned long long int *numbering, float *other_array, unsigned long long int delta)
-{
-    const int i = threadIdx.x;
-    if(other_array[i] == 1) numbering[i] += delta;
-}
-
-// finds common neighbors between nodes f and s. Required for the stratify_none call
-__global__ void find_common_neighbors(float *is_class_component, int *indptr, int *indices, int f, int s, float *r)
-{
-    const int i = threadIdx.x;
-    r[i] = 0;
-    if(is_class_component[i] == 0) return;
-    
-    int d = 0;
-    for(int j = indptr[i]; j < indptr[i+1]; j++){
-        if(indices[j] == f || indices[j] == s){
-            d += 1;
-        }
-    }
-    
-    if(d == 2) r[i] = 1;
 }
 
 
@@ -332,16 +61,13 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
     cudaMalloc((void**)&common_neighbors, pps_arr_size);
     cudaMalloc((void**)&common_neighbors_sum, pps_arr_size);
 
-
     cudaMalloc((void**)&C_D_components_sizes, pps_arr_size);
     init_array<<< 1, n >>>(C_D_components_sizes, 0);
-
 
     stratify_none_getD<<< 1, n >>>(is_class_component, indptr, indices, n, c, D);
     cudaDeviceSynchronize();
     difference<<< 1, n >>>(is_class_component, D, C_D);
     cudaDeviceSynchronize();
-
 
     // Here we are searching for a component with size > 4/5 C
     get_class_components(numbering, indptr, indices, C_D, n, C_D_components);
@@ -360,9 +86,9 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
             }
         }
 
-    if(flag>1){ //component exists
+    if(flag > 1){ //component exists
         float *level, *adjacencies, *in_component;
-        cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
+        cudaMalloc((void**)&adjacencies, n * n * sizeof(float));
         cudaMalloc((void**)&level, pps_arr_size);
         cudaMalloc((void**)&in_component, pps_arr_size);
         in_class<<< 1, n >>>(C_D_components, c_root, in_component);
@@ -372,9 +98,9 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
         spanning_tree_numbering(indptr, indices, in_component, level, c_root, n);
 
         float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum;
-        cudaMalloc((void**)&arr_odd, n*sizeof(float));
-        cudaMalloc((void**)&arr_even, n*sizeof(float));
-        cudaMalloc((void**)&sum, n*sizeof(float));
+        cudaMalloc((void**)&arr_odd, pps_arr_size);
+        cudaMalloc((void**)&arr_even, pps_arr_size);
+        cudaMalloc((void**)&sum, pps_arr_size);
         int current_depth;
         flag = 0;
         cudaDeviceSynchronize();
@@ -471,22 +197,22 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
     cudaFree(second);
 }
 
-
-
+// Stratification for components where every richer node has at least 2/5*|C| neighbors in C
 __device__ void stratify_high_degree(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
 {
+    unsigned int pps_arr_size  = (n+1)*sizeof(float);
     float *adjacencies;
-    cudaMalloc((void**)&adjacencies, n*n*sizeof(float));
+    cudaMalloc((void**)&adjacencies, n * n * sizeof(float));
     init_array<<< n, n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, is_richer_neighbor, adjacencies, n);
     cudaDeviceSynchronize();
 
     float *arr_even, *arr_odd, *curr_array, *other_array, *sum;
-    cudaMalloc((void**)&arr_odd, n*sizeof(float));
+    cudaMalloc((void**)&arr_odd, pps_arr_size);
     init_array<<< 1, n >>>(arr_odd, 1); //this array will be the first to be used for the logical and, we will write into arr_even
-    cudaMalloc((void**)&arr_even, n*sizeof(float));
-    cudaMalloc((void**)&sum, n*sizeof(float));
+    cudaMalloc((void**)&arr_even, pps_arr_size);
+    cudaMalloc((void**)&sum, pps_arr_size);
     int i, j, flag;
     flag = 0;
     cudaDeviceSynchronize();
@@ -496,19 +222,19 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
     //array for indices
     for(i = 0, j = 0; i < n && flag == 0; i++){
         if(is_richer_neighbor[i]){
-            if(j%2 == 0){
+            if(j % 2 == 0){
                 curr_array = arr_even;
                 other_array = arr_odd;
             }else{
                 curr_array = arr_odd;
                 other_array = arr_even;
             }
-            logic_and<<< 1, n >>>(other_array, adjacencies+i*sizeof(float), curr_array);
+            logic_and<<< 1, n >>>(other_array, adjacencies + i * sizeof(float), curr_array);
             cudaDeviceSynchronize();
             if(j > 0){
                 parallel_prefix(curr_array, sum, n);
                 cudaDeviceSynchronize();
-                if(sum[n] < icc_num/5)
+                if(sum[n] < icc_num / 5)
                     flag = 1;
             }
             j++;
@@ -520,17 +246,17 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
     if(j == irn_num){
         // we search for the maximal subcomponent of set C1, and then call stratify_none on it
         float *C1_components, *C1_components_sizes, *C1, *component_size;
-        cudaMalloc((void**)&component_size, n*sizeof(float));
-        cudaMalloc((void**)&C1, n*sizeof(float));
-        cudaMalloc((void**)&C1_components, n*sizeof(float));
-        cudaMalloc((void**)&C1_components_sizes, n*sizeof(float));
+        cudaMalloc((void**)&component_size, pps_arr_size);
+        cudaMalloc((void**)&C1, pps_arr_size);
+        cudaMalloc((void**)&C1_components, pps_arr_size);
+        cudaMalloc((void**)&C1_components_sizes, pps_arr_size);
         init_array<<< 1, n >>>(component_size, 0);
         get_class_components(numbering, indptr, indices, other_array, n, C1_components);
         compute_component_sizes<<< 1, n >>>(C1_components, C1_components_sizes);
         cudaDeviceSynchronize();
         int max_size_root = 0;
         for(i = 0; i < n; i++){
-            if(C1_components_sizes[i] >0){
+            if(C1_components_sizes[i] > 0){
                 if(C1_components_sizes[i] > C1_components_sizes[max_size_root]){
                     max_size_root = i;
                 }
@@ -552,6 +278,7 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
 
 }
 
+// Stratification for components where exists a richer node that has less than 2/5*|C| neighbors in C
 __device__ void stratify_low_degree(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float *is_richer_neighbor, float c)
 {
     float *D, *CuB, *CuB_D, *CuB_D_components, *CuB_D_components_sum;
@@ -592,14 +319,13 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     init_array<<< n, n >>>(adjacencies, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
-    //add_self<<< 1, n >>>(is_class_component, in_component, adjacencies, n);
     
     spanning_tree_numbering(indptr, indices, in_component, level, *b_root, n);
 
     float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum;
-    cudaMalloc((void**)&arr_odd, n*sizeof(float));
-    cudaMalloc((void**)&arr_even, n*sizeof(float));
-    cudaMalloc((void**)&sum, n*sizeof(float));
+    cudaMalloc((void**)&arr_odd, pps_arr_size);
+    cudaMalloc((void**)&arr_even, pps_arr_size);
+    cudaMalloc((void**)&sum, pps_arr_size);
     int current_depth;
     flag = 0;
     cudaDeviceSynchronize();
@@ -608,6 +334,7 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     tmp_arr_pointer = arr_odd;
     other_array[*b_root] = 1;
 
+    //Searching for the maximal set of indices for stratification, by using logical ors for successive cycles
     //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
     //array for indices
     for(i = 0, j = 0, current_depth = 2; flag == 0; i++){
@@ -635,11 +362,11 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     inc_delta<<< 1, n >>>(numbering, other_array, delta);
 
     float *C1_components, *C1_components_sizes, *C1, *component_size, *C_A;
-    cudaMalloc((void**)&component_size, n*sizeof(float));
-    cudaMalloc((void**)&C1, n*sizeof(float));
-    cudaMalloc((void**)&C1_components, n*sizeof(float));
-    cudaMalloc((void**)&C_A, n*sizeof(float));
-    cudaMalloc((void**)&C1_components_sizes, n*sizeof(float));
+    cudaMalloc((void**)&component_size, pps_arr_size);
+    cudaMalloc((void**)&C1, pps_arr_size);
+    cudaMalloc((void**)&C1_components, pps_arr_size);
+    cudaMalloc((void**)&C_A, pps_arr_size);
+    cudaMalloc((void**)&C1_components_sizes, pps_arr_size);
     init_array<<< 1, n >>>(component_size, 0);
     difference<<< 1, n >>>(is_class_component, other_array, C_A);
     cudaDeviceSynchronize();
@@ -647,17 +374,20 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     cudaDeviceSynchronize();
     compute_component_sizes<<< 1, n >>>(C1_components, C1_components_sizes);
     cudaDeviceSynchronize();
+    
+    // We have to find the largest component C1 of C - Aj (we find the most frequent root)
     int max_size_root = 0;
     for(i = 0; i < n; i++){
-        if(C1_components_sizes[i] >0){
+        if(C1_components_sizes[i] > 0){
             if(C1_components_sizes[i] > C1_components_sizes[max_size_root]){
                 max_size_root = i;
             }
         }
     }
-
+    
+    // Call stratify if the largest component C1 has at least 4/5*|C| nodes
     if(C1_components_sizes[max_size_root] > c * 4/5){
-        in_class_special<<< 1, n >>>C1_components, max_size_root, C1);
+        in_class_special<<< 1, n >>>(C1_components, max_size_root, C1);
         cudaDeviceSynchronize();
         stratify<<< 1, n >>>(numbering, C1, indptr, indices, delta / 2, n);
         cudaDeviceSynchronize();
@@ -682,10 +412,10 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     cudaFree(CuB_D_components_sum);
 }
 
+//Tries to break ties in numbering through stratification
 __global__ void stratify(unsigned long long int *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta, int n)
 {
     const int i = threadIdx.x;
-    // printf("%ld, root %f\\n", delta, roots[i]);
     if(roots[i] != i) return;
 
     unsigned int pps_arr_size  = (n+1)*sizeof(float);
@@ -694,6 +424,7 @@ __global__ void stratify(unsigned long long int *numbering, float *roots, int *i
     cudaMalloc((void**)&unique, pps_arr_size);
     cudaMalloc((void**)&unique_sum, pps_arr_size);
 
+    // Stratify must be executed only on nonsingleton class components
     am_unique<<< 1, n >>>(numbering, numbering[i], unique);
     cudaDeviceSynchronize();
     parallel_prefix(unique, unique_sum, n);
@@ -721,13 +452,14 @@ __global__ void stratify(unsigned long long int *numbering, float *roots, int *i
     cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
     cudaDeviceSynchronize();
-
+    
     richer_neighbors<<< 1, n >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n], is_richer_neighbor, high_degree, neighbors_in_c);
     cudaDeviceSynchronize();
     parallel_prefix(high_degree, hd_sum, n);
     parallel_prefix(is_richer_neighbor, irn_sum, n);
     cudaDeviceSynchronize();
     
+    // Based on the number and the degree (number of neighbors in C) of richer neighbors we call different types of stratify
     if(irn_sum[n] == 0){
         stratify_none(numbering, is_class_component, indptr, indices, delta, n, icc_sum[n]);
     }else{
@@ -761,7 +493,6 @@ split_classes = cuda_module.get_function("get_class_components_global")
 N = 10
 DENSITY = 0.5
 
-
 G = generateChordalGraph(N, DENSITY, debug=False)
 # G = generateGraph(N, DENSITY)
 Gcsr = nx.to_scipy_sparse_matrix(G)
@@ -772,21 +503,24 @@ delta = np.uint64(8 ** math.ceil(math.log(N, 5/4)))
 extra_space = int(N / 16 + N / 16**2 + 1)
 unique_numberings = np.unique(numbering)
 start = time.time()
-i=0
+iterations = 0
+#While the numbering is not one-to-one and delta is an integer
 while len(unique_numberings) < len(numbering) and delta >= 1:
     roots = np.arange(N, dtype=np.float32)
+    #Get all the class components
     split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
+    #Call the stratify on each node
+    #If a node is the root of a valid class component goes on with the stratification, otherwise it ends
     stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), delta, np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
     delta = np.uint64(delta/8)
     unique_numberings = np.unique(numbering)
-    i+=1
+    iterations += 1
 print(numbering)
 end = time.time()
-# print(unique_numberings)
 if(len(unique_numberings) == len(numbering)):
-    print("CHORDAL: "+str(end-start))
+    print("UNIQUE NUMBERING: "+str(end-start))
 else:
-    print("NOT CHORDAL: "+str(end-start))
+    print("NOT UNIQUE NUMBERING: "+str(end-start))
 
 start = time.time()
 if(nx.is_chordal(G)):
@@ -795,4 +529,3 @@ if(nx.is_chordal(G)):
 else:
     end = time.time()
     print("NOT CHORDAL: "+str(end-start))
-# print()
