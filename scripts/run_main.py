@@ -304,6 +304,8 @@ __global__ void find_common_neighbors(float *is_class_component, int *indptr, in
     if(d == 2) r[i] = 1;
 }
 
+
+// stratification for components with no richer neighbors
 __device__ void stratify_none(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float c)
 {
     float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors, *C_D_components;
@@ -340,6 +342,8 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
     difference<<< 1, n >>>(is_class_component, D, C_D);
     cudaDeviceSynchronize();
 
+
+    // Here we are searching for a component with size > 4/5 C
     get_class_components(numbering, indptr, indices, C_D, n, C_D_components);
     compute_component_sizes<<< 1, n >>>(C_D_components, C_D_components_sizes);
     cudaDeviceSynchronize();
@@ -365,7 +369,6 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
         init_array<<< n, n >>>(adjacencies, 0);
         cudaDeviceSynchronize();
         compute_adjacent_nodes<<< 1, n >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
-        //add_self<<< 1, n >>>(is_class_component, in_component, adjacencies, n);
         spanning_tree_numbering(indptr, indices, in_component, level, c_root, n);
 
         float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum;
@@ -380,8 +383,9 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
         tmp_arr_pointer = arr_odd;
         other_array[c_root] = 1;
 
+        //Searching for the maximal set of indices for stratification, by using logical ors for successive cycles
         //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
-        //array for indices
+        //array for indices, since it corresponds to the maximal set before the condition was violated
         for(i = 0, j = 0, current_depth = 2; flag == 0; i++){
             if(level[i]==current_depth){
                 if(j > 0){
@@ -422,6 +426,8 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
         if(D_clique_sum[n] == D_sum[n]){
             add_i<<< 1, n >>>(numbering, D_sum, indptr, indices, n);
         }else{
+            // We generate the set of not completely connected nodes in D, select the first node in this set, find
+            // its non-neighbors, select the first non-neighbor, and then find the common neighbors of this set
             difference<<< 1, n >>>(D, D_clique, D_diff);
             cudaDeviceSynchronize();
             parallel_prefix(D_diff, D_diff_sum, n);
@@ -485,6 +491,7 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
     flag = 0;
     cudaDeviceSynchronize();
 
+    //Searching for the maximal set of indices for stratification, by using logical ands for successive cycles
     //Flip between even and odd arrays instead of saving old values. When we go below the threshold, we use the other
     //array for indices
     for(i = 0, j = 0; i < n && flag == 0; i++){
@@ -511,6 +518,7 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
     inc_delta<<< 1, n >>>(numbering, other_array, delta);
     
     if(j == irn_num){
+        // we search for the maximal subcomponent of set C1, and then call stratify_none on it
         float *C1_components, *C1_components_sizes, *C1, *component_size;
         cudaMalloc((void**)&component_size, n*sizeof(float));
         cudaMalloc((void**)&C1, n*sizeof(float));
