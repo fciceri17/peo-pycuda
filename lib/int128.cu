@@ -75,6 +75,23 @@ __host__ __device__ my_uint128 shl_my_uint128 (my_uint128 a, int s)
 }
 
 
+__host__ __device__ my_uint128 shr_my_uint128 (my_uint128 a, int s)
+
+{
+
+  if (s) {
+
+    a.lo = (a.lo >> s) | (a.hi << (64 - s));
+
+    a.hi = (a.hi >> s);
+
+  }
+
+  return a;
+
+}
+
+
 
 __host__ __device__ my_uint128 mul10_my_uint128 (my_uint128 a)
 

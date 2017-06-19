@@ -53,7 +53,6 @@ __global__ void logic_and(float *arr_a, float *arr_b, int n, float *arr_dest)
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
     arr_dest[i] = arr_a[i] && arr_b[i];
-
 }
 
 // Computes the logic or between two arrays
@@ -62,7 +61,22 @@ __global__ void logic_or(float *arr_a, float *arr_b, int n, float *arr_dest)
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
     arr_dest[i] = arr_a[i] || arr_b[i];
+}
 
+// Computes the logic and between two arrays
+__global__ void logic_and_char(float *arr_a, char *arr_b, int n, float *arr_dest)
+{
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
+    arr_dest[i] = arr_a[i] && arr_b[i];
+}
+
+// Computes the logic or between two arrays
+__global__ void logic_or_char(float *arr_a, char *arr_b, int n, float *arr_dest)
+{
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
+    arr_dest[i] = arr_a[i] || arr_b[i];
 }
 
 // Sets all elements in an array to value val
@@ -71,7 +85,15 @@ __global__ void init_array(float *arr, int n, float val)
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
     arr[i] = val;
+}
 
+
+// Sets all elements in an array to value val
+__global__ void init_array_char(char *arr, int n, char val)
+{
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
+    arr[i] = val;
 }
 
 // Creates an array with 1 if numbering[i] == n, 0 otherwise. If the sum of this array is >1, the component is non-singleton

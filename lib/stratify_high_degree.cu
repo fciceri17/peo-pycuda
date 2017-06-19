@@ -1,5 +1,5 @@
 // Computes adjacencies matrix in parallel
-__global__ void compute_adjacent_nodes(int *indptr, int *indices, float *in_component, float *update_values, float *adjacencies, int n)
+__global__ void compute_adjacent_nodes(int *indptr, int *indices, float *in_component, float *update_values, char *adjacencies, int n)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
