@@ -2,7 +2,8 @@
 // The D set is defined as the nodes in CuB that have more than 3/5*|C| neighbors in C
 __global__ void stratify_lowdegree_getD(float *CuB, float *C, int *indptr, int *indices, int n, float c, float *D)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     D[i] = 0;
     if(CuB[i] == 0) return;
 

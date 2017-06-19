@@ -1,5 +1,7 @@
 #include <int128.cu>
 
+#define THREADS_PER_BLOCK 256
+
 // Parallel Prefix Sum (Mark Harris Cuda implementation)
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
 {
@@ -46,43 +48,48 @@ __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num
 }
 
 // Computes the logic and between two arrays
-__global__ void logic_and(float *arr_a, float *arr_b, float *arr_dest)
+__global__ void logic_and(float *arr_a, float *arr_b, int n, float *arr_dest)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     arr_dest[i] = arr_a[i] && arr_b[i];
 
 }
 
 // Computes the logic or between two arrays
-__global__ void logic_or(float *arr_a, float *arr_b, float *arr_dest)
+__global__ void logic_or(float *arr_a, float *arr_b, int n, float *arr_dest)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     arr_dest[i] = arr_a[i] || arr_b[i];
 
 }
 
 // Sets all elements in an array to value val
-__global__ void init_array(float *arr, float val)
+__global__ void init_array(float *arr, int n, float val)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     arr[i] = val;
 
 }
 
 // Creates an array with 1 if numbering[i] == n, 0 otherwise. If the sum of this array is >1, the component is non-singleton
-__global__ void am_unique(my_uint128 *numbering, my_uint128 root_n, float *unique)
+__global__ void am_unique(my_uint128 *numbering, my_uint128 root_n, int n, float *unique)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     if(numbering[i] == root_n) unique[i] = 1;
-    else unique[i]=0;
+    else unique[i] = 0;
 }
 
 // function to call on each node of the graph, sets its component root based on order in the array of indices and numbering
 // this function is called until no further changes are made to the root array, creating all components by numbering
 // a mask may be applied if components have to be searched in a restricted set of nodes
-__global__ void split_classes(my_uint128 *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
+__global__ void split_classes(my_uint128 *numbering, int *indptr, int *indices, float *mask, float *roots, int n, float *changes)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     if(mask[i] == 0){
         roots[i] = -1;
         return;
@@ -106,14 +113,15 @@ __global__ void split_classes(my_uint128 *numbering, int *indptr, int *indices, 
 __host__ __device__ void get_class_components(my_uint128 *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
     float *changes, *sum;
+    int numBlocks = n / THREADS_PER_BLOCK + 1;
 
     cudaMalloc((void**)&changes, sizeof(float) * (n+1));
     cudaMalloc((void**)&sum, sizeof(float) * (n+1));
 
     do{
-        init_array<<< 1, n >>>(changes, 0);
+        init_array<<< numBlocks, THREADS_PER_BLOCK >>>(changes, n, 0);
         cudaDeviceSynchronize();
-        split_classes<<< 1, n >>>(numbering, indptr, indices, mask, roots, changes);
+        split_classes<<< numBlocks, THREADS_PER_BLOCK >>>(numbering, indptr, indices, mask, roots, n, changes);
         cudaDeviceSynchronize();
         parallel_prefix(changes, sum, n);
         cudaDeviceSynchronize();
@@ -125,9 +133,10 @@ __host__ __device__ void get_class_components(my_uint128 *numbering, int *indptr
 
 // writes the depth of the spanning tree depth of the current node if the current node hasn't been explored yet
 // recursively called on node's neighbors, until all nodes have been explored
-__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level)
+__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level, int n)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     int curr_node = neighbors[i];
     if(level[curr_node] > 0 || in_component[curr_node] == 0)
         return;
@@ -137,7 +146,8 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, flo
     int num_neighbors = indptr[curr_node+1] - indptr[curr_node];
     if(num_neighbors > 0){
         __syncthreads();
-        spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1);
+        int numBlocks = num_neighbors / THREADS_PER_BLOCK + 1;
+        spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1, num_neighbors);
         cudaDeviceSynchronize();
     }
 }
@@ -146,27 +156,32 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, flo
 //depth ordering for each node in the component
 __host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, float *in_component, float *level, int root, int n)
 {
-    init_array<<< 1, n >>>(level, 0);
+    int numBlocks = n / THREADS_PER_BLOCK + 1;
+    init_array<<< numBlocks, THREADS_PER_BLOCK >>>(level, n, 0);
     cudaDeviceSynchronize();
     level[root] = 1;
     int j = indptr[root];
     int num_neighbors = indptr[root + 1] - indptr[root];
-    spanning_tree_depth<<< 1, num_neighbors >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2);
+    numBlocks = num_neighbors / THREADS_PER_BLOCK + 1;
+    spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2, num_neighbors);
     cudaDeviceSynchronize();
 
 }
+
 // computes the size of each component in an array with component roots
-__global__ void compute_component_sizes(float *roots, float *sizes)
+__global__ void compute_component_sizes(float *roots, int n, float *sizes)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     sizes[(int)roots[i]] += 1;
 }
 
 // computes the set of richer neighbors of a component, and also determines whether or not the neighbor satisifes the
 // high-degree criterion need in the stratify call
-__global__ void richer_neighbors(my_uint128 *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
+__global__ void richer_neighbors(my_uint128 *numbering, float *roots, int *indptr, int *indices, int root, float c, int n, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     is_richer_neighbor[i] = 0;
     high_degree[i] = 0;
     neighbors_in_c[i] = 0;
@@ -184,17 +199,19 @@ __global__ void richer_neighbors(my_uint128 *numbering, float *roots, int *indpt
 }
 
 // extracts only elements of a component into an array based on their root
-__global__ void in_class(float *roots, int c, float *is_class_component)
+__global__ void in_class(float *roots, int c, int n, float *is_class_component)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     is_class_component[i] = 0;
     if(roots[i] == c) is_class_component[i] = 1;
 }
 
 // like above call, but sets value to root rather than 1
-__global__ void in_class_special(float *roots, int c, float *is_class_component)
+__global__ void in_class_special(float *roots, int c, int n, float *is_class_component)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     is_class_component[i] = -1;
     if(roots[i] == c) is_class_component[i] = c;
 }
@@ -203,7 +220,8 @@ __global__ void in_class_special(float *roots, int c, float *is_class_component)
 // nodes in the component, and therefore makes it elegible to be a clique
 __global__ void is_clique(float *in_component, int *indptr, int *indices, int n, float c, float *full_connected)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     full_connected[i] = 0;
     if(in_component[i] == 0) return;
 
@@ -220,9 +238,10 @@ __global__ void is_clique(float *in_component, int *indptr, int *indices, int n,
 }
 
 // Creates a list of nonzero array indices from the parallel_prefix_sum of an array
-__global__ void sum_array_to_list(float *sums, float *list)
+__global__ void sum_array_to_list(float *sums, int n, float *list)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
 
     if(sums[i+1] == sums[i]) return;
 
@@ -232,7 +251,8 @@ __global__ void sum_array_to_list(float *sums, float *list)
 // incrementally increases the numbering for each node that is in the set of nodes to be incremented
 __global__ void add_i(my_uint128 *numbering, float *D_sum, int *indptr, int *indices, int n)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
 
     if(D_sum[i+1] == D_sum[i]) return;
 
@@ -240,30 +260,34 @@ __global__ void add_i(my_uint128 *numbering, float *D_sum, int *indptr, int *ind
 }
 
 // Returns elements in array a but not in array b
-__global__ void difference(float *a, float *b, float *r)
+__global__ void difference(float *a, float *b, int n, float *r)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     r[i] = a[i] * (1 - b[i]);
 }
 
 // finds the index of the first nonzero element in an array
-__global__ void find_first(float *a, int *first)
+__global__ void find_first(float *a, int n, int *first)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     if(a[i+1] == 1 && a[i] == 0) *first = i;
 }
 
 // increases the numbering of the elements in other_array by amount delta
-__global__ void inc_delta(my_uint128 *numbering, float *other_array, my_uint128 delta)
+__global__ void inc_delta(my_uint128 *numbering, float *other_array, int n, my_uint128 delta)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     if(other_array[i] == 1) numbering[i] = add_my_uint128 (numbering[i], delta);
 }
 
 // finds common neighbors between nodes f and s. Required for the stratify_none call
-__global__ void find_common_neighbors(float *is_class_component, int *indptr, int *indices, int f, int s, float *r)
+__global__ void find_common_neighbors(float *is_class_component, int *indptr, int *indices, int f, int s, int n, float *r)
 {
-    const int i = threadIdx.x;
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
     r[i] = 0;
     if(is_class_component[i] == 0) return;
 
