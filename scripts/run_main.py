@@ -107,7 +107,7 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
         cudaMalloc((void**)&level, pps_arr_size);
         cudaMalloc((void**)&in_component, pps_arr_size);
         in_class<<< numBlocks, THREADS_PER_BLOCK >>>(C_D_components, c_root, n, in_component);
-        init_array<<< n, n >>>(adjacencies, n*n, 0);
+        init_array<<< numBlocks, THREADS_PER_BLOCK >>>(adjacencies, n*n, 0);
         cudaDeviceSynchronize();
         compute_adjacent_nodes<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
         spanning_tree_numbering(indptr, indices, in_component, level, c_root, n);
@@ -219,7 +219,7 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
     unsigned int pps_arr_size  = (n+1)*sizeof(float);
     float *adjacencies;
     cudaMalloc((void**)&adjacencies, n * n * sizeof(float));
-    init_array<<< n, n >>>(adjacencies, n, 0);
+    init_array<<< numBlocks, THREADS_PER_BLOCK >>>(adjacencies, n*n, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, is_class_component, is_richer_neighbor, adjacencies, n);
     cudaDeviceSynchronize();
@@ -333,7 +333,7 @@ __device__ void stratify_low_degree(my_uint128 *numbering, float *is_class_compo
     cudaDeviceSynchronize();
 
     in_class<<< numBlocks, THREADS_PER_BLOCK >>>(CuB_D_components, *b_root, n, in_component);
-    init_array<<< n, n >>>(adjacencies, n, 0);
+    init_array<<< numBlocks, THREADS_PER_BLOCK >>>(adjacencies, n*n, 0);
     cudaDeviceSynchronize();
     compute_adjacent_nodes<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
     
