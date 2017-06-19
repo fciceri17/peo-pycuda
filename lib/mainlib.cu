@@ -1,3 +1,4 @@
+#include <int128.cu>
 
 // Parallel Prefix Sum (Mark Harris Cuda implementation)
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
@@ -69,17 +70,17 @@ __global__ void init_array(float *arr, float val)
 }
 
 // Creates an array with 1 if numbering[i] == n, 0 otherwise. If the sum of this array is >1, the component is non-singleton
-__global__ void am_unique(unsigned long long int *numbering, unsigned long long int root_n, float *unique)
+__global__ void am_unique(my_uint128 *numbering, my_uint128 root_n, float *unique)
 {
     const int i = threadIdx.x;
-    if(numbering[i]==root_n) unique[i]=1;
+    if(numbering[i] == root_n) unique[i] = 1;
     else unique[i]=0;
 }
 
 // function to call on each node of the graph, sets its component root based on order in the array of indices and numbering
 // this function is called until no further changes are made to the root array, creating all components by numbering
 // a mask may be applied if components have to be searched in a restricted set of nodes
-__global__ void split_classes(unsigned long long int *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
+__global__ void split_classes(my_uint128 *numbering, int *indptr, int *indices, float *mask, float *roots, float *changes)
 {
     const int i = threadIdx.x;
     if(mask[i] == 0){
@@ -102,7 +103,7 @@ __global__ void split_classes(unsigned long long int *numbering, int *indptr, in
 
 // loops the split_classes function to obtain the components, identifying them by their root, that is the element in the
 // component with the smallest index in the array. Calls split_classes until no changes are made to the roots array
-__host__ __device__ void get_class_components(unsigned long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
+__host__ __device__ void get_class_components(my_uint128 *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
     float *changes, *sum;
 
@@ -163,7 +164,7 @@ __global__ void compute_component_sizes(float *roots, float *sizes)
 
 // computes the set of richer neighbors of a component, and also determines whether or not the neighbor satisifes the
 // high-degree criterion need in the stratify call
-__global__ void richer_neighbors(unsigned long long int *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
+__global__ void richer_neighbors(my_uint128 *numbering, float *roots, int *indptr, int *indices, int root, float c, float *is_richer_neighbor, float *high_degree, float *neighbors_in_c)
 {
     const int i = threadIdx.x;
     is_richer_neighbor[i] = 0;
@@ -229,13 +230,13 @@ __global__ void sum_array_to_list(float *sums, float *list)
 }
 
 // incrementally increases the numbering for each node that is in the set of nodes to be incremented
-__global__ void add_i(unsigned long long int *numbering, float *D_sum, int *indptr, int *indices, int n)
+__global__ void add_i(my_uint128 *numbering, float *D_sum, int *indptr, int *indices, int n)
 {
     const int i = threadIdx.x;
 
     if(D_sum[i+1] == D_sum[i]) return;
 
-    numbering[i] += (unsigned long long int) D_sum[i+1];
+    numbering[i] = add_my_uint128 (numbering[i], int_to_my_uint128(D_sum[i+1]));
 }
 
 // Returns elements in array a but not in array b
@@ -253,10 +254,10 @@ __global__ void find_first(float *a, int *first)
 }
 
 // increases the numbering of the elements in other_array by amount delta
-__global__ void inc_delta(unsigned long long int *numbering, float *other_array, unsigned long long int delta)
+__global__ void inc_delta(my_uint128 *numbering, float *other_array, my_uint128 delta)
 {
     const int i = threadIdx.x;
-    if(other_array[i] == 1) numbering[i] += delta;
+    if(other_array[i] == 1) numbering[i] = add_my_uint128 (numbering[i], delta);
 }
 
 // finds common neighbors between nodes f and s. Required for the stratify_none call

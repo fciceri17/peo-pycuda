@@ -12,6 +12,20 @@ import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 from pycuda.compiler import DynamicSourceModule
 
+def delta_divide(delta1, delta2):
+    dec = 3
+    if delta2 == 0:
+        delta2 = np.uint64(2 ** 63)
+    while dec > 0 and delta1 > 0:
+        delta1 = np.uint64(delta2 / 2)
+        dec -= 1
+    while dec > 0 and delta2 > 0:
+        delta2 = np.uint64(delta2 / 2)
+        dec -= 1
+    if delta1 > 0:
+        delta2 = np.uint64(0)
+    return delta1, delta2
+
 cuda_code = """
 #include <stdio.h>
 #include <scan.cu>
@@ -22,11 +36,11 @@ cuda_code = """
 
 extern "C" {
 
-__global__ void stratify(unsigned long long int *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta, int n);
+__global__ void stratify(my_uint128 *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta1, unsigned long long int delta2, int n);
 
 
 // needed for pycuda call, since get_class_components is used both inside and outside stratify calls
-__global__ void get_class_components_global(unsigned long long int *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
+__global__ void get_class_components_global(my_uint128 *numbering, int *indptr, int *indices, float *mask, int n, float *roots)
 {
 
     get_class_components(numbering, indptr, indices, mask, n, roots);
@@ -35,7 +49,7 @@ __global__ void get_class_components_global(unsigned long long int *numbering, i
 
 
 // stratification for components with no richer neighbors
-__device__ void stratify_none(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float c)
+__device__ void stratify_none(my_uint128 *numbering, float *is_class_component, int *indptr, int *indices, my_uint128 delta, int n, float c)
 {
     float *D, *C_D, *D_clique, *D_diff, *D_diff_first_neigh, *D_diff_first_neigh_diff, *common_neighbors, *C_D_components;
     float *D_sum, *D_clique_sum, *D_diff_sum, *D_diff_first_neigh_sum, *common_neighbors_sum, *C_D_components_sizes;
@@ -198,7 +212,7 @@ __device__ void stratify_none(unsigned long long int *numbering, float *is_class
 }
 
 // Stratification for components where every richer node has at least 2/5*|C| neighbors in C
-__device__ void stratify_high_degree(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
+__device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_component, int *indptr, int *indices, my_uint128 delta, int n, float *is_richer_neighbor, float irn_num, float icc_num)
 {
     unsigned int pps_arr_size  = (n+1)*sizeof(float);
     float *adjacencies;
@@ -264,7 +278,7 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
         }
         in_class<<< 1, n >>>(C1_components, max_size_root, C1);
         cudaDeviceSynchronize();
-        stratify_none(numbering, C1, indptr, indices, delta / 2, n, C1_components_sizes[max_size_root]);
+        stratify_none(numbering, C1, indptr, indices, shl_my_uint128(delta, -1), n, C1_components_sizes[max_size_root]);
         cudaFree(component_size);
         cudaFree(C1);
         cudaFree(C1_components);
@@ -279,7 +293,7 @@ __device__ void stratify_high_degree(unsigned long long int *numbering, float *i
 }
 
 // Stratification for components where exists a richer node that has less than 2/5*|C| neighbors in C
-__device__ void stratify_low_degree(unsigned long long int *numbering, float *is_class_component, int *indptr, int *indices, unsigned long long int delta, int n, float *is_richer_neighbor, float c)
+__device__ void stratify_low_degree(my_uint128 *numbering, float *is_class_component, int *indptr, int *indices, my_uint128 delta, int n, float *is_richer_neighbor, float c)
 {
     float *D, *CuB, *CuB_D, *CuB_D_components, *CuB_D_components_sum;
     int *b_root;
@@ -389,7 +403,8 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
     if(C1_components_sizes[max_size_root] > c * 4/5){
         in_class_special<<< 1, n >>>(C1_components, max_size_root, C1);
         cudaDeviceSynchronize();
-        stratify<<< 1, n >>>(numbering, C1, indptr, indices, delta / 2, n);
+        my_uint128 newdelta = shl_my_uint128(delta, -1);
+        stratify<<< 1, n >>>(numbering, C1, indptr, indices, newdelta.hi, newdelta.lo, n);
         cudaDeviceSynchronize();
     }
 
@@ -413,10 +428,12 @@ __device__ void stratify_low_degree(unsigned long long int *numbering, float *is
 }
 
 //Tries to break ties in numbering through stratification
-__global__ void stratify(unsigned long long int *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta, int n)
+__global__ void stratify(my_uint128 *numbering, float *roots, int *indptr, int *indices, unsigned long long int delta1, unsigned long long int delta2, int n)
 {
     const int i = threadIdx.x;
     if(roots[i] != i) return;
+    
+    my_uint128 delta = llint_to_uint128(delta1, delta2);
 
     unsigned int pps_arr_size  = (n+1)*sizeof(float);
 
@@ -490,29 +507,35 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 10
+N = 256
 DENSITY = 0.5
 
 G = generateChordalGraph(N, DENSITY, debug=False)
 # G = generateGraph(N, DENSITY)
 Gcsr = nx.to_scipy_sparse_matrix(G)
-numbering = np.zeros(N, dtype=np.uint64)
+numbering = np.zeros(N, dtype=np.complex128)
 
-delta = np.uint64(8 ** math.ceil(math.log(N, 5/4)))
+shifts = math.ceil(math.log(N, 5/4)) * 3
+delta1 = np.uint64(0)
+delta2 = np.uint64(0)
+if shifts > 63:
+    delta1 = np.uint64(2**(shifts - 64))
+else:
+    delta2 = np.uint64(2**(shifts))
 
 extra_space = int(N / 16 + N / 16**2 + 1)
 unique_numberings = np.unique(numbering)
 start = time.time()
 iterations = 0
 #While the numbering is not one-to-one and delta is an integer
-while len(unique_numberings) < len(numbering) and delta >= 1:
+while len(unique_numberings) < len(numbering) and (delta1 >= 1 or delta2 >= 1):
     roots = np.arange(N, dtype=np.float32)
     #Get all the class components
     split_classes(cuda.In(numbering), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), cuda.In(np.ones(N, dtype=np.float32)), np.int32(N), cuda.InOut(roots), block=(1, 1, 1), shared=8*(N+extra_space+10))
     #Call the stratify on each node
     #If a node is the root of a valid class component goes on with the stratification, otherwise it ends
-    stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), delta, np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
-    delta = np.uint64(delta/8)
+    stratify(cuda.InOut(numbering), cuda.In(roots), cuda.In(Gcsr.indptr), cuda.In(Gcsr.indices), delta1, delta2, np.int32(N), block=(N, 1, 1), shared=8*(N+extra_space+10))
+    delta1, delta2 = delta_divide(delta1, delta2)
     unique_numberings = np.unique(numbering)
     iterations += 1
 print(numbering)
