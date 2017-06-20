@@ -514,13 +514,13 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 1024
-DENSITY = 0.5
+N = 100
+DENSITY = 0.4
 
-G = generateChordalGraph(N, DENSITY, debug=False)
+G = generateChordalGraph(N, DENSITY, debug=False, type='mesh')
 # G = generateGraph(N, DENSITY)
 Gcsr = nx.to_scipy_sparse_matrix(G)
-numbering = np.zeros(N, dtype=np.complex128)
+numbering = np.zeros(N, dtype=np.dtype([('d1', np.uint64), ('d2', np.uint64)]))
 
 shifts = math.ceil(math.log(N, 5/4)) * 3
 delta1 = np.uint64(0)
@@ -547,7 +547,12 @@ while len(unique_numberings) < len(numbering) and (delta1 >= 1 or delta2 >= 1):
     unique_numberings = np.unique(numbering)
     iterations += 1
 end = time.time()
-print(numbering)
+order = np.argsort(numbering, order=['d1','d2'])
+numbering = np.zeros(N, dtype=int)
+for i,rank in enumerate(order):
+    numbering[rank] = i
+
+print(numbering, iterations)
 if(len(unique_numberings) == len(numbering)):
     print("UNIQUE NUMBERING: "+str(end-start))
 else:
