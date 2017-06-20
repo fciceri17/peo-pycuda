@@ -82,6 +82,13 @@ def generateChordalGraph(N, DENSITY, debug=False, type = 'mesh'):
             graph.append(set(clique_nodes))
             for node in clique_nodes:
                 graph[node].add(len(graph)-1)
+            for node in range(clique_size,len(graph)-1):
+                lenA = len(graph[node])
+                lenB = len(graph[-1])
+                lenINT =  len(graph[-1].intersection(graph[node]))
+                if lenINT == lenA or lenINT == lenB:
+                    graph[-1].add(node)
+                    graph[node].add(len(graph)-1)
             n+=1
     if debug:
         print("Generated, 1: "+str(count1)+", 2: "+str(count2))
