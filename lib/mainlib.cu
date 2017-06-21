@@ -2,6 +2,22 @@
 
 #define THREADS_PER_BLOCK 256
 
+#if __CUDA_ARCH__ < 600
+__device__ float atomicAdd(float* address, float val)
+{
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed, __float_as_longlong(val + __longlong_as_float(assumed)));
+        // Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
+        } while (assumed != old);
+    return __longlong_as_float(old);
+}
+#endif
+
+
 // Parallel Prefix Sum (Mark Harris Cuda implementation)
 __host__ __device__ void parallel_prefix(float *d_idata, float *d_odata, int num_elements)
 {
@@ -155,11 +171,11 @@ __host__ __device__ void get_class_components(my_uint128 *numbering, int *indptr
 
 // writes the depth of the spanning tree depth of the current node if the current node hasn't been explored yet
 // recursively called on node's neighbors, until all nodes have been explored
-__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int *neighbors, int curr_level, int n)
+__global__ void spanning_tree_depth(int *indptr, int *indices, float *level, float *in_component, int offset, int curr_level, int n)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
-    int curr_node = neighbors[i];
+    int curr_node = indices[offset + i];
     if(level[curr_node] > 0 || in_component[curr_node] == 0)
         return;
     level[curr_node] = curr_level;
@@ -167,9 +183,8 @@ __global__ void spanning_tree_depth(int *indptr, int *indices, float *level, flo
     int j = indptr[curr_node];
     int num_neighbors = indptr[curr_node+1] - indptr[curr_node];
     if(num_neighbors > 0){
-        __syncthreads();
         int numBlocks = num_neighbors / THREADS_PER_BLOCK + 1;
-        spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, indices+j*sizeof(int), curr_level+1, num_neighbors);
+        spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, j, curr_level+1, num_neighbors);
         cudaDeviceSynchronize();
     }
 }
@@ -185,7 +200,7 @@ __host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, floa
     int j = indptr[root];
     int num_neighbors = indptr[root + 1] - indptr[root];
     numBlocks = num_neighbors / THREADS_PER_BLOCK + 1;
-    spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, indices+j*sizeof(int), 2, num_neighbors);
+    spanning_tree_depth<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, level, in_component, j, 2, num_neighbors);
     cudaDeviceSynchronize();
 
 }
@@ -195,7 +210,7 @@ __global__ void compute_component_sizes(float *roots, int n, float *sizes)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
-    sizes[(int)roots[i]] += 1;
+    atomicAdd(sizes+(int)roots[i], 1);
 }
 
 // computes the set of richer neighbors of a component, and also determines whether or not the neighbor satisifes the
@@ -277,8 +292,8 @@ __global__ void add_i(my_uint128 *numbering, float *D_sum, int *indptr, int *ind
     if(i >= n) return;
 
     if(D_sum[i+1] == D_sum[i]) return;
-
-    numbering[i] = add_my_uint128 (numbering[i], int_to_my_uint128(D_sum[i+1]));
+    printf("incrementing node %d by %f\n", i, D_sum[i+1]);
+    numbering[i] = add_my_uint128 (numbering[i], int_to_my_uint128((int)D_sum[i+1]));
 }
 
 // Returns elements in array a but not in array b
@@ -302,6 +317,7 @@ __global__ void inc_delta(my_uint128 *numbering, float *other_array, int n, my_u
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
     if(i >= n) return;
+    if(other_array[i] == 1) printf("adding %lld %lld to node %d\n", delta.hi, delta.lo, i);
     if(other_array[i] == 1) numbering[i] = add_my_uint128 (numbering[i], delta);
 }
 

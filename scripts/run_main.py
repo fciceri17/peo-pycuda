@@ -86,11 +86,12 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
 
     // Here we are searching for a component with size > 4/5 C
     get_class_components(numbering, indptr, indices, C_D, n, C_D_components);
+    cudaDeviceSynchronize();
     compute_component_sizes<<< numBlocks, THREADS_PER_BLOCK >>>(C_D_components, n, C_D_components_sizes);
     cudaDeviceSynchronize();
     for(i = 0, rolling_sum = 0, flag = 0; i < n && flag == 0; i++)
         if(C_D_components_sizes[i] >0){
-            if(C_D_components_sizes[i] > c* 4/5){
+            if(C_D_components_sizes[i] >= c* 4/5){
                 flag = 100;
                 c_root = i;
             }else{
@@ -111,19 +112,24 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
         init_array_char<<< numBlocks, THREADS_PER_BLOCK >>>(adjacencies, n*n, 0);
         cudaDeviceSynchronize();
         compute_adjacent_nodes<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, is_class_component, in_component, adjacencies, n);
+
         spanning_tree_numbering(indptr, indices, in_component, level, c_root, n);
 
         float *arr_even, *arr_odd, *curr_array, *other_array, *tmp_arr_pointer, *sum;
         cudaMalloc((void**)&arr_odd, pps_arr_size);
         cudaMalloc((void**)&arr_even, pps_arr_size);
         cudaMalloc((void**)&sum, pps_arr_size);
+        init_array<<< numBlocks, THREADS_PER_BLOCK >>>(arr_odd, n, 0);
         int current_depth;
         flag = 0;
         cudaDeviceSynchronize();
-        other_array = (float *)adjacencies + c_root*sizeof(float);
+        logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(arr_odd, adjacencies+c_root*n*sizeof(char), n, arr_odd);
         curr_array = arr_even;
         tmp_arr_pointer = arr_odd;
+        other_array = arr_odd;
         other_array[c_root] = 1;
+        cudaDeviceSynchronize();
+
 
         //Searching for the maximal set of indices for stratification, by using logical ors for successive cycles
         //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
@@ -135,10 +141,13 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
                     curr_array = tmp_arr_pointer;
                     tmp_arr_pointer = other_array; // for next cycle - needed due to first declaration used to skip copying
                 }
-                logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies+i*sizeof(char), n, curr_array);
+                logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies+i*n*sizeof(char), n, curr_array);
                 cudaDeviceSynchronize();
                 parallel_prefix(curr_array, sum, n);
                 cudaDeviceSynchronize();
+                for(int l = 0; l<n; l++)
+                    printf("%g, ", curr_array[l]);
+                printf("%g\\n", sum[n]);
                 if(sum[n] > c * 4/5)
                     flag = 1;
                 j++;
@@ -159,13 +168,15 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
     }else{
         //number of members of D
         parallel_prefix(D, D_sum, n);
+        cudaDeviceSynchronize();
         //get number of neighbors in D of nodes in D
-        is_clique<<< numBlocks, THREADS_PER_BLOCK >>>(D, indptr, indices, n, c, D_clique);
+        is_clique<<< numBlocks, THREADS_PER_BLOCK >>>(D, indptr, indices, n, D_sum[n], D_clique);
         cudaDeviceSynchronize();
         //check if they are all connected
         parallel_prefix(D_clique, D_clique_sum, n);
         cudaDeviceSynchronize();
-        if(D_clique_sum[n] == D_sum[n]){
+        printf("clique_sum %f, D sum %f\\n", D_clique_sum[n], D_sum[n]);
+        if(D_clique_sum[n] == D_sum[n] && D_sum[n] > 0 ){
             add_i<<< numBlocks, THREADS_PER_BLOCK >>>(numbering, D_sum, indptr, indices, n);
         }else{
             // We generate the set of not completely connected nodes in D, select the first node in this set, find
@@ -225,6 +236,8 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
     compute_adjacent_nodes<<< numBlocks, THREADS_PER_BLOCK >>>(indptr, indices, is_class_component, is_richer_neighbor, adjacencies, n);
     cudaDeviceSynchronize();
 
+
+
     float *arr_even, *arr_odd, *curr_array, *other_array, *sum;
     cudaMalloc((void**)&arr_odd, pps_arr_size);
     init_array<<< numBlocks, THREADS_PER_BLOCK >>>(arr_odd, n, 1); //this array will be the first to be used for the logical and, we will write into arr_even
@@ -246,7 +259,7 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
                 curr_array = arr_odd;
                 other_array = arr_even;
             }
-            logic_and_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies + i * sizeof(char), n, curr_array);
+            logic_and_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies + i * n * sizeof(char), n, curr_array);
             cudaDeviceSynchronize();
             if(j > 0){
                 parallel_prefix(curr_array, sum, n);
@@ -257,7 +270,7 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
             j++;
         }
     }
-
+    if(j == irn_num) other_array = curr_array;
     inc_delta<<< 1, n >>>(numbering, other_array, n, delta);
     
     if(j == irn_num){
@@ -269,6 +282,7 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
         cudaMalloc((void**)&C1_components_sizes, pps_arr_size);
         init_array<<< numBlocks, THREADS_PER_BLOCK >>>(component_size, n, 0);
         get_class_components(numbering, indptr, indices, other_array, n, C1_components);
+        cudaDeviceSynchronize();
         compute_component_sizes<<< numBlocks, THREADS_PER_BLOCK >>>(C1_components, n, C1_components_sizes);
         cudaDeviceSynchronize();
         int max_size_root = 0;
@@ -281,7 +295,8 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
         }
         in_class<<< numBlocks, THREADS_PER_BLOCK >>>(C1_components, max_size_root, n, C1);
         cudaDeviceSynchronize();
-        stratify_none(numbering, C1, indptr, indices, shl_my_uint128(delta, -1), n, C1_components_sizes[max_size_root]);
+        if (C1_components_sizes[max_size_root]>1)
+            stratify_none(numbering, C1, indptr, indices, shl_my_uint128(delta, -1), n, C1_components_sizes[max_size_root]);
         cudaFree(component_size);
         cudaFree(C1);
         cudaFree(C1_components);
@@ -310,8 +325,7 @@ __device__ void stratify_low_degree(my_uint128 *numbering, float *is_class_compo
     cudaMalloc((void**)&CuB_D, pps_arr_size);
     cudaMalloc((void**)&CuB_D_components, pps_arr_size);
     cudaMalloc((void**)&CuB_D_components_sum, pps_arr_size);
-
-    float *level, *in_component;
+float *level, *in_component;
     char *adjacencies;
     cudaMalloc((void**)&adjacencies, n*n*sizeof(char));
     cudaMalloc((void**)&level, pps_arr_size);
@@ -345,13 +359,16 @@ __device__ void stratify_low_degree(my_uint128 *numbering, float *is_class_compo
     cudaMalloc((void**)&arr_odd, pps_arr_size);
     cudaMalloc((void**)&arr_even, pps_arr_size);
     cudaMalloc((void**)&sum, pps_arr_size);
+    init_array<<< numBlocks, THREADS_PER_BLOCK >>>(arr_odd, n, 0);
     int current_depth;
     flag = 0;
     cudaDeviceSynchronize();
-    other_array = (float *)adjacencies + (*b_root) * sizeof(float);
+    logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(arr_odd, adjacencies+(*b_root)*n*sizeof(char), n, arr_odd);
+    other_array = arr_odd;
     curr_array = arr_even;
     tmp_arr_pointer = arr_odd;
     other_array[*b_root] = 1;
+    cudaDeviceSynchronize();
 
     //Searching for the maximal set of indices for stratification, by using logical ors for successive cycles
     //Flip between even and odd arrays instead of saving old values. When we go above the threshold, we use the other
@@ -363,7 +380,7 @@ __device__ void stratify_low_degree(my_uint128 *numbering, float *is_class_compo
                 curr_array = tmp_arr_pointer;
                 tmp_arr_pointer = other_array; // for next cycle - needed due to first declaration used to skip copying
             }
-            logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies+i*sizeof(char), n, curr_array);
+            logic_or_char<<< numBlocks, THREADS_PER_BLOCK >>>(other_array, adjacencies+i*n*sizeof(char), n, curr_array);
             cudaDeviceSynchronize();
             parallel_prefix(curr_array, sum, n);
             cudaDeviceSynchronize();
@@ -444,39 +461,44 @@ __global__ void stratify(my_uint128 *numbering, float *roots, int *indptr, int *
 
     unsigned int pps_arr_size  = (n+1)*sizeof(float);
 
+    /*
     float *unique, *unique_sum;
     cudaMalloc((void**)&unique, pps_arr_size);
     cudaMalloc((void**)&unique_sum, pps_arr_size);
+    */
+
+    float  *is_class_component, *icc_sum;
+    cudaMalloc((void**)&is_class_component, pps_arr_size);
+    cudaMalloc((void**)&icc_sum, pps_arr_size);
 
     // Stratify must be executed only on nonsingleton class components
-    am_unique<<< numBlocks, THREADS_PER_BLOCK >>>(numbering, numbering[i], n, unique);
-    cudaDeviceSynchronize();
-    parallel_prefix(unique, unique_sum, n);
-    cudaDeviceSynchronize();
-    if(unique_sum[n]==1){
-        cudaFree(unique);
-        cudaFree(unique_sum);
-        return;
-    }
-
-    float *is_richer_neighbor, *high_degree, *is_class_component, *neighbors_in_c;
-    float *irn_sum, *hd_sum, *icc_sum, *nic_sum;
-
-    cudaMalloc((void**)&is_richer_neighbor, pps_arr_size);
-    cudaMalloc((void**)&high_degree, pps_arr_size);
-    cudaMalloc((void**)&is_class_component, pps_arr_size);
-    cudaMalloc((void**)&neighbors_in_c, pps_arr_size);
-    cudaMalloc((void**)&irn_sum, pps_arr_size);
-    cudaMalloc((void**)&hd_sum, pps_arr_size);
-    cudaMalloc((void**)&icc_sum, pps_arr_size);
-    cudaMalloc((void**)&nic_sum, pps_arr_size);
-
-
     in_class<<< numBlocks, THREADS_PER_BLOCK >>>(roots, roots[i], n, is_class_component);
     cudaDeviceSynchronize();
     parallel_prefix(is_class_component, icc_sum, n);
     cudaDeviceSynchronize();
-    
+    /*
+    am_unique<<< numBlocks, THREADS_PER_BLOCK >>>(numbering, numbering[i], n, unique);
+    cudaDeviceSynchronize();
+    parallel_prefix(unique, unique_sum, n);
+    cudaDeviceSynchronize();
+    */
+    if(icc_sum[n]==1){
+        cudaFree(is_class_component);
+        cudaFree(icc_sum);
+        return;
+    }
+
+    float *is_richer_neighbor, *high_degree, *neighbors_in_c;
+    float *irn_sum, *hd_sum, *nic_sum;
+
+    cudaMalloc((void**)&is_richer_neighbor, pps_arr_size);
+    cudaMalloc((void**)&high_degree, pps_arr_size);
+    cudaMalloc((void**)&neighbors_in_c, pps_arr_size);
+    cudaMalloc((void**)&irn_sum, pps_arr_size);
+    cudaMalloc((void**)&hd_sum, pps_arr_size);
+    cudaMalloc((void**)&nic_sum, pps_arr_size);
+
+
     richer_neighbors<<< numBlocks, THREADS_PER_BLOCK >>>(numbering, roots, indptr, indices, roots[i], icc_sum[n], n, is_richer_neighbor, high_degree, neighbors_in_c);
     cudaDeviceSynchronize();
     parallel_prefix(high_degree, hd_sum, n);
@@ -502,8 +524,10 @@ __global__ void stratify(my_uint128 *numbering, float *roots, int *indptr, int *
     cudaFree(hd_sum);
     cudaFree(icc_sum);
     cudaFree(nic_sum);
+    /*
     cudaFree(unique);
     cudaFree(unique_sum);
+    */
 }
 
 }
@@ -514,11 +538,13 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 100
+N = 5
 DENSITY = 0.4
 
-G = generateChordalGraph(N, DENSITY, debug=False, type='mesh')
+# G = generateChordalGraph(N, DENSITY, debug=False, type='mesh')
 # G = generateGraph(N, DENSITY)
+# G = nx.Graph([(0,1),(0,2),(0,3),(2,1),(2,3),(2,4),(3,4),(1,0),(2,0),(3,0),(1,2),(3,2),(4,2),(4,3)])
+G = nx.Graph([(0,1),(0,2),(0,3),(1,0),(1,3),(1,4),(2,0),(3,0),(3,1),(4,1)])
 Gcsr = nx.to_scipy_sparse_matrix(G)
 numbering = np.zeros(N, dtype=np.dtype([('d1', np.uint64), ('d2', np.uint64)]))
 

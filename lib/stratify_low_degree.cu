@@ -14,7 +14,7 @@ __global__ void stratify_lowdegree_getD(float *CuB, float *C, int *indptr, int *
         }
     }
 
-    if(d >= 3 / 5 * c){
+    if(d > c * 3 / 5 ){
         D[i] = 1;
     }
 }
