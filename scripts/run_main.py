@@ -84,11 +84,18 @@ __device__ void stratify_none(my_uint128 *numbering, float *is_class_component, 
     difference<<< numBlocks, THREADS_PER_BLOCK >>>(is_class_component, D, n, C_D);
     cudaDeviceSynchronize();
 
+
     // Here we are searching for a component with size > 4/5 C
     get_class_components(numbering, indptr, indices, C_D, n, C_D_components);
     cudaDeviceSynchronize();
     compute_component_sizes<<< numBlocks, THREADS_PER_BLOCK >>>(C_D_components, n, C_D_components_sizes);
     cudaDeviceSynchronize();
+    for(i=0;i<n;i++)
+        printf("%g, ", C_D_components[i]);
+    printf("is C_D_comp\\n");
+    for(i=0;i<n;i++)
+        printf("%g, ", C_D_components_sizes[i]);
+    printf("is C_D_comp_sizes\\n");
     for(i = 0, rolling_sum = 0, flag = 0; i < n && flag == 0; i++)
         if(C_D_components_sizes[i] >0){
             if(C_D_components_sizes[i] >= c* 4/5){
@@ -296,7 +303,7 @@ __device__ void stratify_high_degree(my_uint128 *numbering, float *is_class_comp
         in_class<<< numBlocks, THREADS_PER_BLOCK >>>(C1_components, max_size_root, n, C1);
         cudaDeviceSynchronize();
         if (C1_components_sizes[max_size_root]>1)
-            stratify_none(numbering, C1, indptr, indices, shl_my_uint128(delta, -1), n, C1_components_sizes[max_size_root]);
+            stratify_none(numbering, C1, indptr, indices, shr_my_uint128(delta, 1), n, C1_components_sizes[max_size_root]);
         cudaFree(component_size);
         cudaFree(C1);
         cudaFree(C1_components);
@@ -538,13 +545,13 @@ cuda_module = DynamicSourceModule(cuda_code, include_dirs=[os.path.join(os.getcw
 stratify = cuda_module.get_function("stratify")
 split_classes = cuda_module.get_function("get_class_components_global")
 
-N = 5
+N = 8
 DENSITY = 0.4
 
-# G = generateChordalGraph(N, DENSITY, debug=False, type='mesh')
+G = generateChordalGraph(N, DENSITY, debug=False, type='mesh')
 # G = generateGraph(N, DENSITY)
 # G = nx.Graph([(0,1),(0,2),(0,3),(2,1),(2,3),(2,4),(3,4),(1,0),(2,0),(3,0),(1,2),(3,2),(4,2),(4,3)])
-G = nx.Graph([(0,1),(0,2),(0,3),(1,0),(1,3),(1,4),(2,0),(3,0),(3,1),(4,1)])
+# G = nx.Graph([(0,1),(0,2),(0,3),(1,0),(1,3),(1,4),(2,0),(3,0),(3,1),(4,1)])
 Gcsr = nx.to_scipy_sparse_matrix(G)
 numbering = np.zeros(N, dtype=np.dtype([('d1', np.uint64), ('d2', np.uint64)]))
 
@@ -583,6 +590,9 @@ if(len(unique_numberings) == len(numbering)):
     print("UNIQUE NUMBERING: "+str(end-start))
 else:
     print("NOT UNIQUE NUMBERING: "+str(end-start))
+
+nx.draw(G, with_labels=True)
+plt.show()
 
 start = time.time()
 if(nx.is_chordal(G)):

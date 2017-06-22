@@ -14,7 +14,7 @@ __global__ void stratify_none_getD(float *C, int *indptr, int *indices, int n, f
         }
     }
 
-    if(d > c * 3 / 5 ){
+    if(d > c * 3 / 5){ // || c == 2  ???????????????
         D[i] = 1;
     }
 }

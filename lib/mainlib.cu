@@ -103,6 +103,13 @@ __global__ void init_array(float *arr, int n, float val)
     arr[i] = val;
 }
 
+// Sets all elements in an array to i
+__global__ void init_array_seq(float *arr, int n)
+{
+    const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if(i >= n) return;
+    arr[i] = i;
+}
 
 // Sets all elements in an array to value val
 __global__ void init_array_char(char *arr, int n, char val)
@@ -155,6 +162,8 @@ __host__ __device__ void get_class_components(my_uint128 *numbering, int *indptr
 
     cudaMalloc((void**)&changes, sizeof(float) * (n+1));
     cudaMalloc((void**)&sum, sizeof(float) * (n+1));
+
+    init_array_seq<<< numBlocks, THREADS_PER_BLOCK>>>(roots, n);
 
     do{
         init_array<<< numBlocks, THREADS_PER_BLOCK >>>(changes, n, 0);
@@ -209,7 +218,7 @@ __host__ __device__ void spanning_tree_numbering(int *indptr, int *indices, floa
 __global__ void compute_component_sizes(float *roots, int n, float *sizes)
 {
     const int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if(i >= n) return;
+    if(i >= n || i<0) return;
     atomicAdd(sizes+(int)roots[i], 1);
 }
 
